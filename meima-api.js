@@ -5,6 +5,21 @@
 const MEIMA_API_URL = 'https://script.google.com/macros/s/AKfycbywRk5-H4XN5FM0CEOOKMEdbbKqXoknoCM17gqr97SRwc9bVI7C5IdafF_h6nFWAcGm/exec';
 
 const Meima = {
+  // Brand assets (same folder layout on every page)
+  LOGO: 'assets/logo.png',              // full logo with tagline (login, invoices)
+  LOGO_BADGE: 'assets/logo-badge.png',  // oval only (page headers)
+
+  /** Standard header for every Meima page. Put the result in a <div> at the top of <body>. */
+  header(title, rightHtml = '') {
+    return `<header style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 16px;background:#fff;border-bottom:3px solid #7a2e1a">
+      <div style="display:flex;align-items:center;gap:12px">
+        <img src="${this.LOGO_BADGE}" alt="MeiMa" style="height:42px;display:block">
+        <span style="font:600 18px system-ui,sans-serif;color:#7a2e1a">${title}</span>
+      </div>
+      <div>${rightHtml}</div>
+    </header>`;
+  },
+
   token() { return sessionStorage.getItem('meima_token'); },
   isLoggedIn() { return !!this.token(); },
   logout() { sessionStorage.removeItem('meima_token'); },
