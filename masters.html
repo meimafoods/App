@@ -122,7 +122,14 @@ function draw() {
     if (bomFilter) data = rows.filter(r => r.ProductID === bomFilter);
   }
   bar += `<span class="sp"></span>`;
-  if (tab === 'BOM' && bomFilter) bar += `<span>Total: ${data.reduce((s, r) => s + Number(r.QtyG || 0), 0).toLocaleString('en-IN')} g</span>`;
+  if (tab === 'BOM' && bomFilter) {
+    const top = Math.max(...data.map(r => Number(r.Version) || 1));
+    const tot = data.filter(r => (Number(r.Version) || 1) === top).reduce((s, r) => s + Number(r.QtyG || 0), 0);
+    const p = (refs.Products || []).find(x => x.ProductID === bomFilter);
+    const std = Number(p && p.StdBatchInputKg || 0) * 1000, diff = std - tot, g = n => Math.abs(n).toLocaleString('en-IN');
+    bar += `<span style="color:${std && diff === 0 ? '#1b7a3a' : '#b26a00'}">v${top} total ${g(tot)} g` +
+      (std ? ` of ${g(std)} g standard batch` + (diff === 0 ? ' ✓' : ` (${g(diff)} g ${diff > 0 ? 'short' : 'over'})`) : ' (set Std batch input in Products)') + `</span>`;
+  }
   bar += `<button class="pri" id="add">+ Add</button>`;
   $('#bar').innerHTML = bar;
   $('#add').onclick = () => openForm();
@@ -138,7 +145,7 @@ function draw() {
 
 function openForm(row) {
   const html = CFG[tab].map(f => {
-    const v = row ? row[f.k] : '';
+    const v = row ? row[f.k] : (tab === 'BOM' ? ({ ProductID: bomFilter, Version: 1 }[f.k] ?? '') : '');
     let input;
     if (f.t === 'select') input = `<select name="${f.k}">${f.opts.map(o => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
     else if (f.t === 'ref') input = `<select name="${f.k}"><option value="">Select…</option>${(refs[f.ref] || []).map(r => `<option value="${esc(r[IDCOL[f.ref]])}" ${r[IDCOL[f.ref]] === v ? 'selected' : ''}>${esc(r.Name)}</option>`).join('')}</select>`;

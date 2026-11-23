@@ -39,6 +39,27 @@ const Meima = {
     return json.data;
   },
 
+  /** Shows a PIN screen when not logged in, then calls start(). Use on every new page. */
+  requireLogin(start) {
+    if (this.isLoggedIn()) return start();
+    const o = document.createElement('div');
+    o.style.cssText = 'position:fixed;inset:0;background:#faf5ee;display:flex;align-items:center;justify-content:center;z-index:99';
+    o.innerHTML = `<div style="background:#fff;border:1px solid #e4d8c8;border-radius:10px;padding:20px;width:min(320px,90vw);font:15px system-ui,sans-serif">
+      <img src="${this.LOGO}" alt="MeiMa" style="width:100%;max-width:240px;display:block;margin:0 auto 12px">
+      <label style="font-size:13px">PIN</label>
+      <input type="password" style="width:100%;padding:8px;border:1px solid #e4d8c8;border-radius:6px;margin:4px 0 12px;font:inherit">
+      <button style="background:#7a2e1a;color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer">Log in</button>
+      <div data-err style="color:#b00020;font-size:13px;margin-top:8px;min-height:18px"></div></div>`;
+    document.body.appendChild(o);
+    const inp = o.querySelector('input'), err = o.querySelector('[data-err]');
+    const go = async () => {
+      try { await this.login(inp.value); o.remove(); start(); } catch (e) { err.textContent = e.message; }
+    };
+    o.querySelector('button').onclick = go;
+    inp.onkeydown = e => { if (e.key === 'Enter') go(); };
+    inp.focus();
+  },
+
   async login(pin) {
     const data = await this.call('auth.login', { pin });
     sessionStorage.setItem('meima_token', data.token);
