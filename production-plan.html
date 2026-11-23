@@ -36,7 +36,6 @@
   <div class="ctl noprint">
     <div><label>Masala</label><select id="prod"></select></div>
     <div><label>Batches</label><input id="n" type="number" min="1" max="10" value="1" style="width:80px"></div>
-    <div><label>BOM version</label><select id="ver"></select></div>
     <div><label>Date</label><input id="dt" type="date"></div>
     <div><label>Prepared by</label><input id="by" type="text"></div>
     <button class="pri" onclick="window.print()">Print / Save as PDF</button>
@@ -58,14 +57,17 @@ async function init() {
   $('#hdr').innerHTML = Meima.header('Production Plan', '<a href="masters.html" style="color:#7a2e1a;font-size:14px">Masters</a>');
   $('#dt').value = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   try {
-    [P, B, M, S] = await Promise.all([Meima.list('Products'), Meima.list('BOM'), Meima.list('Materials'), Meima.settings()]);
+    let boms;
+    [P, boms, M, S] = await Promise.all([Meima.list('Products'), Meima.call('bom.list'), Meima.list('Materials'), Meima.settings()]);
+    B = boms.flatMap(b => b.lines.map(l => ({ ProductID: b.ProductID, MaterialID: l.MaterialID, QtyG: l.QtyG })));
+    P.forEach(p => { const b = boms.find(x => x.ProductID === p.ProductID); p.StdBatchInputKg = b ? Number(b.BatchSizeG) / 1000 : 0; });
   } catch (e) {
     $('#status').textContent = e.message;
     if (!Meima.isLoggedIn()) location.reload();
     return;
   }
   $('#prod').innerHTML = P.map(p => `<option value="${esc(p.ProductID)}">${esc(p.Name)}</option>`).join('');
-  ['prod', 'n', 'ver', 'dt', 'by'].forEach(id => $('#' + id).addEventListener('input', render));
+  ['prod', 'n', 'dt', 'by'].forEach(id => $('#' + id).addEventListener('input', render));
   render();
 }
 
@@ -74,15 +76,8 @@ function render() {
   if (!prod) { $('#doc').innerHTML = '<p>Add a masala in Masters first.</p>'; return; }
 
   const all = B.filter(r => r.ProductID === prod.ProductID);
-  const vers = [...new Set(all.map(r => Number(r.Version) || 1))].sort((a, b) => a - b);
-  if (prod.ProductID !== lastProd) {
-    lastProd = prod.ProductID;
-    $('#ver').innerHTML = vers.map(v => `<option>${v}</option>`).join('');
-    $('#ver').value = vers[vers.length - 1];
-  }
-  const ver = Number($('#ver').value) || 1;
   const n = Math.min(10, Math.max(1, parseInt($('#n').value) || 1));
-  const rows = all.filter(r => (Number(r.Version) || 1) === ver);
+  const rows = all;
   const name = id => (M.find(m => m.MaterialID === id) || {}).Name || id;
 
   if (!rows.length) {
@@ -118,7 +113,7 @@ function render() {
       <div><span>Standard batch input</span>${std ? (std / 1000).toFixed(3) + ' kg' : '—'}</div>
       <div><span>Plan date</span>${esc(date)}</div>
       <div><span>Prepared by</span>${esc($('#by').value) || '—'}</div>
-      <div><span>BOM version · total input</span>v${ver} · ${(per * n / 1000).toFixed(3)} kg</div>
+      <div><span>Total input</span>${(per * n / 1000).toFixed(3)} kg</div>
     </div>
     <table>
       <thead><tr><th>Material</th><th>Per batch (g)</th>${batchHeads}<th>Total to issue (g)</th><th>Total (kg)</th></tr></thead>

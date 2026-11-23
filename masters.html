@@ -12,7 +12,7 @@
   nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
   nav button{border:1px solid var(--line);background:#fff;padding:7px 12px;border-radius:6px;cursor:pointer}
   nav button.on{background:var(--brand);color:#fff;border-color:var(--brand)}
-  .bar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .bar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
   .bar .sp{flex:1}
   button.pri{background:var(--brand);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer}
   button.lnk{background:none;border:0;color:var(--brand);cursor:pointer;padding:2px 6px}
@@ -28,6 +28,7 @@
   #status.err{color:#b00020}
   #login{max-width:320px;margin:15vh auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:20px}
   .empty{padding:20px;text-align:center;color:#8a7a68}
+  .ok{color:#1b7a3a}.warn{color:#b26a00}
 </style>
 </head>
 <body>
@@ -56,32 +57,27 @@
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const g = n => Number(n || 0).toLocaleString('en-IN');
 const F = (k, l, t = 'text', o = {}) => ({ k, l, t, ...o });
 
 const CFG = {
-  Customers: [F('Name','Name','text',{req:1}), F('Address','Address'), F('Phone','Phone'), F('GSTIN','GSTIN'),
-              F('MarginPercent','Margin %','number'), F('CourierRatePerKg','Courier ₹/kg (blank = default)','number')],
-  Vendors:   [F('Name','Name','text',{req:1}), F('Type','Type','select',{opts:['Raw material','Grinder','Courier']}),
-              F('Phone','Phone'), F('Address','Address')],
-  Materials: [F('Name','Name','text',{req:1}), F('Unit','Unit','select',{opts:['kg']}), F('MinStockKg','Min stock (kg)','number')],
-  Products:  [F('Name','Name','text',{req:1}), F('PocketSizeG','Pocket size (g)','number'),
-              F('StdBatchInputKg','Std batch input (kg)','number'),
-              F('GrindingChargePerBatch','Grinding ₹ per batch','number'), F('HSN','HSN code'), F('TaxPercent','Tax %','number')],
-  BOM:       [F('ProductID','Masala','ref',{ref:'Products',req:1}), F('MaterialID','Material','ref',{ref:'Materials',req:1}),
-              F('QtyG','Qty (grams)','number',{req:1}), F('Version','Version')],
-  Accounts:  [F('Name','Name','text',{req:1}), F('Type','Type','select',{opts:['Cash','Bank','UPI','Other']}),
-              F('OpeningBalance','Opening balance ₹','number')]
+  Customers:   [F('Name','Name','text',{req:1}), F('Address','Address'), F('Phone','Phone'), F('GSTIN','GSTIN'), F('MarginPercent','Margin %','number')],
+  Vendors:     [F('Name','Name','text',{req:1}), F('Type','Type','select',{opts:['Raw material','Grinder','Courier']}), F('Phone','Phone'), F('Address','Address')],
+  Materials:   [F('Name','Ingredient name','text',{req:1}), F('Unit','Unit','select',{opts:['kg']}), F('MinStockKg','Min stock (kg)','number')],
+  Products:    [F('Name','Product name','text',{req:1}), F('PocketSizeG','Pocket size (g)','number'), F('HSN','HSN code'), F('TaxPercent','Tax %','number')],
+  ChargeTypes: [F('Name','Charge type','text',{req:1})],
+  Accounts:    [F('Name','Name','text',{req:1}), F('Type','Type','select',{opts:['Cash','Bank','UPI','Other']}), F('OpeningBalance','Opening balance ₹','number')]
 };
-const IDCOL = { Customers:'CustomerID', Vendors:'VendorID', Materials:'MaterialID', Products:'ProductID', BOM:'BomID', Accounts:'AccountID' };
-const TABS = [...Object.keys(CFG), 'Settings'];
+const IDCOL = { Customers:'CustomerID', Vendors:'VendorID', Materials:'MaterialID', Products:'ProductID', ChargeTypes:'ChargeTypeID', Accounts:'AccountID' };
+const LABEL = { ChargeTypes: 'Charge types' };
+const TABS = ['Customers', 'Vendors', 'Materials', 'Products', 'BOM', 'ChargeTypes', 'Accounts', 'Settings'];
 
-let tab = 'Customers', rows = [], refs = {}, bomFilter = '';
+let tab = 'Customers', rows = [], boms = [], prods = [], mats = [], ed = null;
 
 function status(msg, err) { const s = $('#status'); s.textContent = msg || ''; s.className = err ? 'err' : ''; }
 function showLogin() { $('#app').hidden = true; $('#login').hidden = false; $('#pin').value = ''; $('#pin').focus(); }
 function showApp() { $('#login').hidden = true; $('#app').hidden = false; show(tab); }
 function fail(e) { status(e.message, true); if (!Meima.isLoggedIn()) showLogin(); }
-const nameOf = (ref, id) => ((refs[ref] || []).find(r => r[IDCOL[ref]] === id) || {}).Name || id;
 
 // ---------- login ----------
 async function doLogin() {
@@ -95,7 +91,7 @@ $('#out').onclick = () => { Meima.logout(); showLogin(); };
 
 // ---------- navigation ----------
 function drawNav() {
-  $('#nav').innerHTML = TABS.map(t => `<button class="${t === tab ? 'on' : ''}" data-t="${t}">${t}</button>`).join('');
+  $('#nav').innerHTML = TABS.map(t => `<button class="${t === tab ? 'on' : ''}" data-t="${t}">${LABEL[t] || t}</button>`).join('');
   $('#nav').querySelectorAll('button').forEach(b => b.onclick = () => show(b.dataset.t));
 }
 
@@ -103,56 +99,34 @@ async function show(t) {
   tab = t; drawNav(); status('Loading…');
   try {
     if (t === 'Settings') { rows = await Meima.settings(); drawSettings(); }
-    else {
-      for (const r of new Set(CFG[t].filter(f => f.ref).map(f => f.ref))) refs[r] = await Meima.list(r);
-      rows = await Meima.list(t); draw();
-    }
+    else if (t === 'BOM') await loadBom();
+    else { rows = await Meima.list(t); draw(); }
     status('');
   } catch (e) { fail(e); }
 }
 
-// ---------- master tables ----------
+// ---------- simple master tables ----------
 function draw() {
   const cols = CFG[tab];
-  let data = rows;
-  let bar = `<strong>${tab}</strong>`;
-  if (tab === 'BOM') {
-    bar += ` <select id="bf" style="width:auto"><option value="">All masalas</option>` +
-      (refs.Products || []).map(p => `<option value="${esc(p.ProductID)}" ${p.ProductID === bomFilter ? 'selected' : ''}>${esc(p.Name)}</option>`).join('') + `</select>`;
-    if (bomFilter) data = rows.filter(r => r.ProductID === bomFilter);
-  }
-  bar += `<span class="sp"></span>`;
-  if (tab === 'BOM' && bomFilter) {
-    const top = Math.max(...data.map(r => Number(r.Version) || 1));
-    const tot = data.filter(r => (Number(r.Version) || 1) === top).reduce((s, r) => s + Number(r.QtyG || 0), 0);
-    const p = (refs.Products || []).find(x => x.ProductID === bomFilter);
-    const std = Number(p && p.StdBatchInputKg || 0) * 1000, diff = std - tot, g = n => Math.abs(n).toLocaleString('en-IN');
-    bar += `<span style="color:${std && diff === 0 ? '#1b7a3a' : '#b26a00'}">v${top} total ${g(tot)} g` +
-      (std ? ` of ${g(std)} g standard batch` + (diff === 0 ? ' ✓' : ` (${g(diff)} g ${diff > 0 ? 'short' : 'over'})`) : ' (set Std batch input in Products)') + `</span>`;
-  }
-  bar += `<button class="pri" id="add">+ Add</button>`;
-  $('#bar').innerHTML = bar;
+  $('#bar').innerHTML = `<strong>${LABEL[tab] || tab}</strong><span class="sp"></span><button class="pri" id="add">+ Add</button>`;
   $('#add').onclick = () => openForm();
-  if ($('#bf')) $('#bf').onchange = e => { bomFilter = e.target.value; draw(); };
-
-  if (!data.length) { $('#tbl').innerHTML = `<div class="empty">Nothing here yet. Click “+ Add”.</div>`; return; }
+  if (!rows.length) { $('#tbl').innerHTML = `<div class="empty">Nothing here yet. Click “+ Add”.</div>`; return; }
   $('#tbl').innerHTML = `<table><thead><tr>${cols.map(c => `<th>${esc(c.l)}</th>`).join('')}<th></th></tr></thead><tbody>` +
-    data.map((r, i) => `<tr>${cols.map(c => `<td>${esc(c.t === 'ref' ? nameOf(c.ref, r[c.k]) : r[c.k])}</td>`).join('')}` +
+    rows.map((r, i) => `<tr>${cols.map(c => `<td>${esc(r[c.k])}</td>`).join('')}` +
       `<td><button class="lnk" data-e="${i}">Edit</button><button class="lnk" data-d="${i}">Remove</button></td></tr>`).join('') + `</tbody></table>`;
-  $('#tbl').querySelectorAll('[data-e]').forEach(b => b.onclick = () => openForm(data[b.dataset.e]));
-  $('#tbl').querySelectorAll('[data-d]').forEach(b => b.onclick = () => removeRow(data[b.dataset.d]));
+  $('#tbl').querySelectorAll('[data-e]').forEach(b => b.onclick = () => openForm(rows[b.dataset.e]));
+  $('#tbl').querySelectorAll('[data-d]').forEach(b => b.onclick = () => removeRow(rows[b.dataset.d]));
 }
 
 function openForm(row) {
   const html = CFG[tab].map(f => {
-    const v = row ? row[f.k] : (tab === 'BOM' ? ({ ProductID: bomFilter, Version: 1 }[f.k] ?? '') : '');
-    let input;
-    if (f.t === 'select') input = `<select name="${f.k}">${f.opts.map(o => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
-    else if (f.t === 'ref') input = `<select name="${f.k}"><option value="">Select…</option>${(refs[f.ref] || []).map(r => `<option value="${esc(r[IDCOL[f.ref]])}" ${r[IDCOL[f.ref]] === v ? 'selected' : ''}>${esc(r.Name)}</option>`).join('')}</select>`;
-    else input = `<input name="${f.k}" type="${f.t === 'number' ? 'number' : 'text'}" step="any" value="${esc(v)}">`;
+    const v = row ? row[f.k] : '';
+    const input = f.t === 'select'
+      ? `<select name="${f.k}">${f.opts.map(o => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`
+      : `<input name="${f.k}" type="${f.t === 'number' ? 'number' : 'text'}" step="any" value="${esc(v)}">`;
     return `<label>${esc(f.l)}${f.req ? ' *' : ''}</label>${input}`;
   }).join('');
-  $('#frm').innerHTML = `<h3 style="margin:0">${row ? 'Edit' : 'Add'} ${tab.replace(/s$/, '')}</h3>${html}
+  $('#frm').innerHTML = `<h3 style="margin:0">${row ? 'Edit' : 'Add'}</h3>${html}
     <div id="ferr" style="color:#b00020;font-size:13px;margin-top:8px"></div>
     <div class="row"><button type="button" class="lnk" id="cx">Cancel</button><button type="button" class="pri" id="sv">Save</button></div>`;
   $('#cx').onclick = () => $('#dlg').close();
@@ -163,8 +137,7 @@ function openForm(row) {
 async function saveForm(row) {
   const data = {};
   for (const f of CFG[tab]) {
-    const el = $('#frm').elements[f.k];
-    let v = el.value.trim();
+    const v = $('#frm').elements[f.k].value.trim();
     if (f.req && !v) { $('#ferr').textContent = f.l + ' is required'; return; }
     data[f.k] = (f.t === 'number' && v !== '') ? Number(v) : v;
   }
@@ -179,13 +152,104 @@ async function removeRow(row) {
   try { await Meima.remove(tab, row[IDCOL[tab]]); show(tab); } catch (e) { fail(e); }
 }
 
+// ---------- BOM: one per product = standard batch quantity + ingredient list ----------
+const pname = id => (prods.find(p => p.ProductID === id) || {}).Name || id;
+const sumG = lines => lines.reduce((s, l) => s + (Number(l.QtyG) || 0), 0);
+
+async function loadBom() {
+  [boms, prods, mats] = await Promise.all([Meima.call('bom.list'), Meima.list('Products'), Meima.list('Materials')]);
+  drawBom();
+}
+
+function drawBom() {
+  ed = null;
+  const free = prods.filter(p => !boms.some(b => b.ProductID === p.ProductID));
+  $('#bar').innerHTML = `<strong>Bill of Materials</strong><span class="sp"></span>${free.length ? '<button class="pri" id="add">+ Add BOM</button>' : ''}`;
+  if (free.length) $('#add').onclick = () => edit(null);
+  if (!boms.length) { $('#tbl').innerHTML = `<div class="empty">No BOM yet. Add products first, then click “+ Add BOM”.</div>`; return; }
+  $('#tbl').innerHTML = `<table><thead><tr><th>Masala</th><th>Standard batch</th><th>Ingredients</th><th>Total</th><th>Check</th><th></th></tr></thead><tbody>` +
+    boms.map((b, i) => {
+      const tot = sumG(b.lines), d = Number(b.BatchSizeG) - tot;
+      return `<tr><td>${esc(pname(b.ProductID))}</td><td>${g(b.BatchSizeG)} g</td><td>${b.lines.length}</td><td>${g(tot)} g</td>` +
+        `<td class="${d ? 'warn' : 'ok'}">${d ? g(Math.abs(d)) + ' g ' + (d > 0 ? 'short' : 'over') : '✓'}</td>` +
+        `<td><button class="lnk" data-e="${i}">Edit</button><button class="lnk" data-d="${i}">Remove</button></td></tr>`;
+    }).join('') + `</tbody></table>`;
+  $('#tbl').querySelectorAll('[data-e]').forEach(b => b.onclick = () => edit(boms[b.dataset.e]));
+  $('#tbl').querySelectorAll('[data-d]').forEach(b => b.onclick = async () => {
+    if (!confirm('Remove this BOM? Past batches keep their own quantities.')) return;
+    try { await Meima.call('bom.remove', { bomId: boms[b.dataset.d].BomID }); show('BOM'); } catch (e) { fail(e); }
+  });
+}
+
+function edit(b) {
+  ed = b ? { bomId: b.BomID, productId: b.ProductID, batchSizeG: b.BatchSizeG, lines: b.lines.map(l => ({ MaterialID: l.MaterialID, QtyG: l.QtyG })) }
+         : { bomId: '', productId: '', batchSizeG: '', lines: [{ MaterialID: '', QtyG: '' }] };
+  drawEditor();
+}
+
+function drawEditor() {
+  const free = prods.filter(p => p.ProductID === ed.productId || !boms.some(b => b.ProductID === p.ProductID));
+  const matOpts = sel => `<option value="">Select…</option>` + mats.map(m => `<option value="${esc(m.MaterialID)}" ${m.MaterialID === sel ? 'selected' : ''}>${esc(m.Name)}</option>`).join('');
+  $('#bar').innerHTML = `<strong>${ed.bomId ? 'Edit' : 'New'} BOM</strong>`;
+  $('#tbl').innerHTML = `<div style="padding:16px">
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px"><label>Masala *</label><select id="ep" ${ed.bomId ? 'disabled' : ''}><option value="">Select…</option>${free.map(p => `<option value="${esc(p.ProductID)}" ${p.ProductID === ed.productId ? 'selected' : ''}>${esc(p.Name)}</option>`).join('')}</select></div>
+      <div style="flex:1;min-width:200px"><label>Standard batch quantity (g) *</label><input id="eb" type="number" step="any" placeholder="e.g. 5000" value="${esc(ed.batchSizeG)}"></div>
+    </div>
+    <table style="margin-top:14px"><thead><tr><th>Ingredient</th><th>In batch (g)</th><th>For 1 KG (g)</th><th></th></tr></thead><tbody>` +
+    ed.lines.map((l, i) => `<tr><td><select data-m="${i}">${matOpts(l.MaterialID)}</select></td><td><input data-q="${i}" type="number" step="any" value="${esc(l.QtyG)}" style="width:110px"></td><td id="k${i}"></td><td><button class="lnk" data-x="${i}">✕</button></td></tr>`).join('') +
+    `</tbody><tfoot><tr><td><strong>Total</strong></td><td id="tt"></td><td id="t1"></td><td></td></tr></tfoot></table>
+    <div id="chk" style="margin:10px 0;font-size:13px"></div>
+    <button class="lnk" id="al">+ Add ingredient</button>
+    <div id="ferr" style="color:#b00020;font-size:13px;margin-top:8px"></div>
+    <div class="row"><button class="lnk" id="cx2">Cancel</button><button class="pri" id="sv2">Save BOM</button></div></div>`;
+  $('#ep').onchange = e => { ed.productId = e.target.value; };
+  $('#eb').oninput = e => { ed.batchSizeG = e.target.value; calc(); };
+  $('#tbl').querySelectorAll('[data-m]').forEach(s => s.onchange = () => { ed.lines[s.dataset.m].MaterialID = s.value; });
+  $('#tbl').querySelectorAll('[data-q]').forEach(i => i.oninput = () => { ed.lines[i.dataset.q].QtyG = i.value; calc(); });
+  $('#tbl').querySelectorAll('[data-x]').forEach(b => b.onclick = () => {
+    ed.lines.splice(b.dataset.x, 1);
+    if (!ed.lines.length) ed.lines.push({ MaterialID: '', QtyG: '' });
+    drawEditor();
+  });
+  $('#al').onclick = () => { ed.lines.push({ MaterialID: '', QtyG: '' }); drawEditor(); };
+  $('#cx2').onclick = drawBom;
+  $('#sv2').onclick = saveBom;
+  calc();
+}
+
+function calc() {
+  const tot = sumG(ed.lines), b = Number(ed.batchSizeG) || 0, d = b - tot;
+  ed.lines.forEach((l, i) => { $('#k' + i).textContent = tot ? g(Math.round((Number(l.QtyG) || 0) / tot * 10000) / 10) : ''; });
+  $('#tt').textContent = g(tot);
+  $('#t1').textContent = tot ? '1,000' : '';
+  $('#chk').innerHTML = !b ? '' : d === 0
+    ? `<span class="ok">✓ Ingredients match the standard batch (${g(b)} g = ${(b / 1000).toFixed(3)} kg)</span>`
+    : `<span class="warn">${g(Math.abs(d))} g ${d > 0 ? 'short of' : 'over'} the standard batch of ${g(b)} g</span>`;
+}
+
+async function saveBom() {
+  const err = m => { $('#ferr').textContent = m; };
+  const lines = ed.lines.filter(l => l.MaterialID || l.QtyG !== '');
+  const ids = lines.map(l => l.MaterialID);
+  if (!ed.productId) return err('Select a masala');
+  if (!(Number(ed.batchSizeG) > 0)) return err('Enter the standard batch quantity');
+  if (!lines.length) return err('Add at least one ingredient');
+  if (lines.some(l => !l.MaterialID || !(Number(l.QtyG) > 0))) return err('Every ingredient needs a material and grams');
+  if (new Set(ids).size !== ids.length) return err('An ingredient is listed twice');
+  try {
+    await Meima.call('bom.save', { bomId: ed.bomId, productId: ed.productId, batchSizeG: Number(ed.batchSizeG),
+      lines: lines.map(l => ({ MaterialID: l.MaterialID, QtyG: Number(l.QtyG) })) });
+    show('BOM');
+  } catch (e) { err(e.message); }
+}
+
 // ---------- settings ----------
 function drawSettings() {
   $('#bar').innerHTML = '<strong>Settings</strong>';
   $('#tbl').innerHTML = `<div style="padding:12px;display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--line)"><img src="${Meima.LOGO}" alt="MeiMa" style="height:70px"><span style="font-size:13px">Logo: <code>${Meima.LOGO}</code> (shown on every page and on invoices)</span></div>` +
     `<table><thead><tr><th>Setting</th><th>Value</th><th></th></tr></thead><tbody>` +
-    Object.keys(rows).map(k => `<tr><td>${esc(k)}</td><td><input data-k="${esc(k)}" value="${esc(rows[k])}"></td>` +
-      `<td><button class="lnk" data-s="${esc(k)}">Save</button></td></tr>`).join('') + `</tbody></table>`;
+    Object.keys(rows).map(k => `<tr><td>${esc(k)}</td><td><input data-k="${esc(k)}" value="${esc(rows[k])}"></td><td><button class="lnk" data-s="${esc(k)}">Save</button></td></tr>`).join('') + `</tbody></table>`;
   $('#tbl').querySelectorAll('[data-s]').forEach(b => b.onclick = async () => {
     const k = b.dataset.s, v = $('#tbl').querySelector(`input[data-k="${k}"]`).value;
     try { await Meima.call('settings.set', { key: k, value: v }); status('Saved ' + k); } catch (e) { fail(e); }
