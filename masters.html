@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meima – Masters</title>
+<style>
+  :root{--brand:#7a2e1a;--bg:#faf5ee;--line:#e4d8c8;--ink:#2b2118}
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  header{background:var(--brand);color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center}
+  header h1{font-size:18px;margin:0}
+  main{max-width:960px;margin:0 auto;padding:16px}
+  nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  nav button{border:1px solid var(--line);background:#fff;padding:7px 12px;border-radius:6px;cursor:pointer}
+  nav button.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .bar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .bar .sp{flex:1}
+  button.pri{background:var(--brand);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer}
+  button.lnk{background:none;border:0;color:var(--brand);cursor:pointer;padding:2px 6px}
+  .wrap{overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:8px}
+  table{border-collapse:collapse;width:100%}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{background:#f3e9dc;font-size:13px}
+  input,select{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font:inherit}
+  label{display:block;margin:10px 0 4px;font-size:13px}
+  dialog{border:1px solid var(--line);border-radius:10px;width:min(420px,92vw);padding:16px}
+  .row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+  #status{min-height:20px;margin-bottom:8px;font-size:13px}
+  #status.err{color:#b00020}
+  #login{max-width:320px;margin:15vh auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:20px}
+  .empty{padding:20px;text-align:center;color:#8a7a68}
+</style>
+</head>
+<body>
+
+<div id="login" hidden>
+  <h2 style="margin-top:0">Meima Foods</h2>
+  <label for="pin">PIN</label>
+  <input id="pin" type="password" autocomplete="current-password">
+  <div class="row"><button class="pri" id="go">Log in</button></div>
+  <div id="lerr" style="color:#b00020;font-size:13px;margin-top:8px"></div>
+</div>
+
+<div id="app" hidden>
+  <header><h1>Meima – Masters</h1><button class="lnk" style="color:#fff" id="out">Log out</button></header>
+  <main>
+    <nav id="nav"></nav>
+    <div id="status"></div>
+    <div class="bar" id="bar"></div>
+    <div class="wrap" id="tbl"></div>
+  </main>
+</div>
+
+<dialog id="dlg"><form method="dialog" id="frm"></form></dialog>
+
+<script src="meima-api.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const F = (k, l, t = 'text', o = {}) => ({ k, l, t, ...o });
+
+const CFG = {
+  Customers: [F('Name','Name','text',{req:1}), F('Address','Address'), F('Phone','Phone'), F('GSTIN','GSTIN'),
+              F('MarginPercent','Margin %','number'), F('CourierRatePerKg','Courier ₹/kg (blank = default)','number')],
+  Vendors:   [F('Name','Name','text',{req:1}), F('Type','Type','select',{opts:['Raw material','Grinder','Courier']}),
+              F('Phone','Phone'), F('Address','Address')],
+  Materials: [F('Name','Name','text',{req:1}), F('Unit','Unit','select',{opts:['kg']}), F('MinStockKg','Min stock (kg)','number')],
+  Products:  [F('Name','Name','text',{req:1}), F('PocketSizeG','Pocket size (g)','number'),
+              F('StdBatchInputKg','Std batch input (kg)','number'), F('HSN','HSN code'), F('TaxPercent','Tax %','number')],
+  BOM:       [F('ProductID','Masala','ref',{ref:'Products',req:1}), F('MaterialID','Material','ref',{ref:'Materials',req:1}),
+              F('QtyG','Qty (grams)','number',{req:1}), F('Version','Version')],
+  Accounts:  [F('Name','Name','text',{req:1}), F('Type','Type','select',{opts:['Cash','Bank','UPI','Other']}),
+              F('OpeningBalance','Opening balance ₹','number')]
+};
+const IDCOL = { Customers:'CustomerID', Vendors:'VendorID', Materials:'MaterialID', Products:'ProductID', BOM:'BomID', Accounts:'AccountID' };
+const TABS = [...Object.keys(CFG), 'Settings'];
+
+let tab = 'Customers', rows = [], refs = {}, bomFilter = '';
+
+function status(msg, err) { const s = $('#status'); s.textContent = msg || ''; s.className = err ? 'err' : ''; }
+function showLogin() { $('#app').hidden = true; $('#login').hidden = false; $('#pin').value = ''; $('#pin').focus(); }
+function showApp() { $('#login').hidden = true; $('#app').hidden = false; show(tab); }
+function fail(e) { status(e.message, true); if (!Meima.isLoggedIn()) showLogin(); }
+const nameOf = (ref, id) => ((refs[ref] || []).find(r => r[IDCOL[ref]] === id) || {}).Name || id;
+
+// ---------- login ----------
+async function doLogin() {
+  try { await Meima.login($('#pin').value); $('#lerr').textContent = ''; showApp(); }
+  catch (e) { $('#lerr').textContent = e.message; }
+}
+$('#go').onclick = doLogin;
+$('#pin').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
+$('#out').onclick = () => { Meima.logout(); showLogin(); };
+
+// ---------- navigation ----------
+function drawNav() {
+  $('#nav').innerHTML = TABS.map(t => `<button class="${t === tab ? 'on' : ''}" data-t="${t}">${t}</button>`).join('');
+  $('#nav').querySelectorAll('button').forEach(b => b.onclick = () => show(b.dataset.t));
+}
+
+async function show(t) {
+  tab = t; drawNav(); status('Loading…');
+  try {
+    if (t === 'Settings') { rows = await Meima.settings(); drawSettings(); }
+    else {
+      for (const r of new Set(CFG[t].filter(f => f.ref).map(f => f.ref))) refs[r] = await Meima.list(r);
+      rows = await Meima.list(t); draw();
+    }
+    status('');
+  } catch (e) { fail(e); }
+}
+
+// ---------- master tables ----------
+function draw() {
+  const cols = CFG[tab];
+  let data = rows;
+  let bar = `<strong>${tab}</strong>`;
+  if (tab === 'BOM') {
+    bar += ` <select id="bf" style="width:auto"><option value="">All masalas</option>` +
+      (refs.Products || []).map(p => `<option value="${esc(p.ProductID)}" ${p.ProductID === bomFilter ? 'selected' : ''}>${esc(p.Name)}</option>`).join('') + `</select>`;
+    if (bomFilter) data = rows.filter(r => r.ProductID === bomFilter);
+  }
+  bar += `<span class="sp"></span>`;
+  if (tab === 'BOM' && bomFilter) bar += `<span>Total: ${data.reduce((s, r) => s + Number(r.QtyG || 0), 0).toLocaleString('en-IN')} g</span>`;
+  bar += `<button class="pri" id="add">+ Add</button>`;
+  $('#bar').innerHTML = bar;
+  $('#add').onclick = () => openForm();
+  if ($('#bf')) $('#bf').onchange = e => { bomFilter = e.target.value; draw(); };
+
+  if (!data.length) { $('#tbl').innerHTML = `<div class="empty">Nothing here yet. Click “+ Add”.</div>`; return; }
+  $('#tbl').innerHTML = `<table><thead><tr>${cols.map(c => `<th>${esc(c.l)}</th>`).join('')}<th></th></tr></thead><tbody>` +
+    data.map((r, i) => `<tr>${cols.map(c => `<td>${esc(c.t === 'ref' ? nameOf(c.ref, r[c.k]) : r[c.k])}</td>`).join('')}` +
+      `<td><button class="lnk" data-e="${i}">Edit</button><button class="lnk" data-d="${i}">Remove</button></td></tr>`).join('') + `</tbody></table>`;
+  $('#tbl').querySelectorAll('[data-e]').forEach(b => b.onclick = () => openForm(data[b.dataset.e]));
+  $('#tbl').querySelectorAll('[data-d]').forEach(b => b.onclick = () => removeRow(data[b.dataset.d]));
+}
+
+function openForm(row) {
+  const html = CFG[tab].map(f => {
+    const v = row ? row[f.k] : '';
+    let input;
+    if (f.t === 'select') input = `<select name="${f.k}">${f.opts.map(o => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+    else if (f.t === 'ref') input = `<select name="${f.k}"><option value="">Select…</option>${(refs[f.ref] || []).map(r => `<option value="${esc(r[IDCOL[f.ref]])}" ${r[IDCOL[f.ref]] === v ? 'selected' : ''}>${esc(r.Name)}</option>`).join('')}</select>`;
+    else input = `<input name="${f.k}" type="${f.t === 'number' ? 'number' : 'text'}" step="any" value="${esc(v)}">`;
+    return `<label>${esc(f.l)}${f.req ? ' *' : ''}</label>${input}`;
+  }).join('');
+  $('#frm').innerHTML = `<h3 style="margin:0">${row ? 'Edit' : 'Add'} ${tab.replace(/s$/, '')}</h3>${html}
+    <div id="ferr" style="color:#b00020;font-size:13px;margin-top:8px"></div>
+    <div class="row"><button type="button" class="lnk" id="cx">Cancel</button><button type="button" class="pri" id="sv">Save</button></div>`;
+  $('#cx').onclick = () => $('#dlg').close();
+  $('#sv').onclick = () => saveForm(row);
+  $('#dlg').showModal();
+}
+
+async function saveForm(row) {
+  const data = {};
+  for (const f of CFG[tab]) {
+    const el = $('#frm').elements[f.k];
+    let v = el.value.trim();
+    if (f.req && !v) { $('#ferr').textContent = f.l + ' is required'; return; }
+    data[f.k] = (f.t === 'number' && v !== '') ? Number(v) : v;
+  }
+  try {
+    if (row) await Meima.update(tab, row[IDCOL[tab]], data); else await Meima.create(tab, data);
+    $('#dlg').close(); show(tab);
+  } catch (e) { $('#ferr').textContent = e.message; }
+}
+
+async function removeRow(row) {
+  if (!confirm('Remove this record? History is kept.')) return;
+  try { await Meima.remove(tab, row[IDCOL[tab]]); show(tab); } catch (e) { fail(e); }
+}
+
+// ---------- settings ----------
+function drawSettings() {
+  $('#bar').innerHTML = '<strong>Settings</strong>';
+  $('#tbl').innerHTML = `<table><thead><tr><th>Setting</th><th>Value</th><th></th></tr></thead><tbody>` +
+    Object.keys(rows).map(k => `<tr><td>${esc(k)}</td><td><input data-k="${esc(k)}" value="${esc(rows[k])}"></td>` +
+      `<td><button class="lnk" data-s="${esc(k)}">Save</button></td></tr>`).join('') + `</tbody></table>`;
+  $('#tbl').querySelectorAll('[data-s]').forEach(b => b.onclick = async () => {
+    const k = b.dataset.s, v = $('#tbl').querySelector(`input[data-k="${k}"]`).value;
+    try { await Meima.call('settings.set', { key: k, value: v }); status('Saved ' + k); } catch (e) { fail(e); }
+  });
+}
+
+// ---------- start ----------
+Meima.isLoggedIn() ? showApp() : showLogin();
+</script>
+</body>
+</html>
