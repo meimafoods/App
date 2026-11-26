@@ -39,6 +39,7 @@
     <div><label>Date</label><input id="dt" type="date"></div>
     <div><label>Prepared by</label><input id="by" type="text"></div>
     <button class="pri" onclick="window.print()">Print / Save as PDF</button>
+    <a id="start" href="production.html" style="background:#fff;color:#7a2e1a;border:1px solid #7a2e1a;padding:8px 14px;border-radius:6px;text-decoration:none">Start this batch →</a>
   </div>
   <div id="status" class="noprint"></div>
   <div id="doc"></div>
@@ -78,6 +79,7 @@ function render() {
 
   const all = B.filter(r => r.ProductID === prod.ProductID);
   const n = Math.min(10, Math.max(1, parseInt($('#n').value) || 1));
+  $('#start').href = `production.html?product=${encodeURIComponent(prod.ProductID)}&n=${n}`;
   const rows = all;
   const name = id => (M.find(m => m.MaterialID === id) || {}).Name || id;
 

@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meima – Production</title>
+<style>
+  :root{--brand:#7a2e1a;--bg:#faf5ee;--line:#e4d8c8;--ink:#2b2118}
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  main{max-width:1000px;margin:0 auto;padding:16px}
+  .bar{display:flex;gap:8px;align-items:center;margin-bottom:10px}.bar .sp{flex:1}
+  button.pri{background:var(--brand);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer}
+  button.pri:disabled{opacity:.4;cursor:not-allowed}
+  button.lnk{background:none;border:0;color:var(--brand);cursor:pointer;padding:2px 6px}
+  button.chip{border:1px solid var(--brand);background:#fff;color:var(--brand);border-radius:16px;padding:4px 12px;cursor:pointer;margin:0 6px 6px 0}
+  .wrap{overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:8px;margin-bottom:14px}
+  .sec{padding:14px 16px}.sec h3{margin:0 0 8px;font-size:15px;color:var(--brand)}
+  table{border-collapse:collapse;width:100%}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{background:#f3e9dc;font-size:13px}
+  td.n,th.n{text-align:right}
+  input,select{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font:inherit}
+  label{display:block;margin:10px 0 4px;font-size:13px}
+  .grid{display:flex;gap:12px;flex-wrap:wrap}.grid>div{flex:1;min-width:150px}
+  #status{min-height:20px;margin-bottom:8px;font-size:13px}#status.err{color:#b00020}
+  .empty{padding:20px;text-align:center;color:#8a7a68}
+  .ok{color:#1b7a3a}.warn{color:#b26a00}.bad{color:#b00020}
+  .cards{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}.cards div{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 14px}
+  .cards span{display:block;font-size:12px;color:#8a7a68}.cards b{font-size:17px}
+  .tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px}
+  .Issued{background:#fff1d6;color:#8a5a00}.Completed{background:#dff3e4;color:#1b7a3a}
+</style>
+</head>
+<body>
+<div id="hdr"></div>
+<main>
+  <div id="status"></div>
+  <div class="bar" id="bar"></div>
+  <div id="body"></div>
+</main>
+
+<script src="meima-api.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const g = n => Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 3 });
+const rs = n => n === null || n === undefined ? '–' : Meima.money(n);
+const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+let batches = [], prods = [], boms = [], mats = [], vendors = [], ctypes = [], stock = [], nb = null, chs = [];
+const pn = id => (prods.find(p => p.ProductID === id) || {}).Name || id;
+const mn = id => (mats.find(m => m.MaterialID === id) || {}).Name || id;
+const vn = id => id ? ((vendors.find(v => v.VendorID === id) || {}).Name || id) : '';
+const opts = (list, idk, sel, blank) => (blank ? `<option value="">${blank}</option>` : '') + list.map(x => `<option value="${esc(x[idk])}" ${x[idk] === sel ? 'selected' : ''}>${esc(x.Name)}</option>`).join('');
+
+function status(msg, err) { const s = $('#status'); s.textContent = msg || ''; s.className = err ? 'err' : ''; }
+function fail(e) { status(e.message, true); if (!Meima.isLoggedIn()) location.reload(); }
+async function load() {
+  [batches, prods, boms, mats, vendors, ctypes, stock] = await Promise.all([Meima.call('batch.list'), Meima.list('Products'), Meima.call('bom.list'),
+    Meima.list('Materials'), Meima.list('Vendors'), Meima.list('ChargeTypes'), Meima.call('stock.list')]);
+}
+
+Meima.requireLogin(async () => {
+  $('#hdr').innerHTML = Meima.header('Production', '<a href="production-plan.html" style="color:#7a2e1a;font-size:14px;margin-right:14px">Plan</a><a href="purchase.html" style="color:#7a2e1a;font-size:14px;margin-right:14px">Purchase & Stock</a><a href="masters.html" style="color:#7a2e1a;font-size:14px">Masters</a>');
+  try {
+    await load();
+    const q = new URLSearchParams(location.search);
+    q.get('product') ? newBatch(q.get('product'), q.get('n')) : drawList();
+  } catch (e) { fail(e); }
+});
+
+// ---------- list ----------
+function drawList() {
+  status('');
+  $('#bar').innerHTML = `<strong>Batches</strong><span class="sp"></span><button class="pri" id="add">+ New batch (issue materials)</button>`;
+  $('#add').onclick = () => newBatch();
+  if (!batches.length) { $('#body').innerHTML = `<div class="wrap"><div class="empty">No batches yet.</div></div>`; return; }
+  $('#body').innerHTML = `<div class="wrap"><table><thead><tr><th>Batch</th><th>Date</th><th>Masala</th><th class="n">Batches</th><th class="n">In (kg)</th><th class="n">Out (kg)</th><th class="n">Pockets</th><th>Status</th><th class="n">Total cost</th><th class="n">Cost / pocket</th><th></th></tr></thead><tbody>` +
+    batches.map(b => `<tr><td>${esc(b.BatchID)}</td><td>${esc(b.Date)}</td><td>${esc(pn(b.ProductID))}</td><td class="n">${b.BatchCount}</td><td class="n">${g(b.InputKg)}</td><td class="n">${b.OutputKg ? g(b.OutputKg) : '–'}</td><td class="n">${b.Pockets || '–'}</td>
+      <td><span class="tag ${b.Status}">${b.Status}</span></td><td class="n">${rs(b.TotalCost)}</td><td class="n">${rs(b.CostPerPocket)}</td><td><button class="lnk" data-o="${esc(b.BatchID)}">Open</button></td></tr>`).join('') + `</tbody></table></div>`;
+  $('#body').querySelectorAll('[data-o]').forEach(b => b.onclick = () => openBatch(b.dataset.o));
+}
+
+// ---------- step 1: issue materials ----------
+function newBatch(pid, n) {
+  nb = { productId: pid || '', count: n || 1, date: today(), grinder: '', notes: '' };
+  $('#bar').innerHTML = `<strong>New batch · issue materials</strong>`;
+  $('#body').innerHTML = `<div class="wrap sec"><div class="grid">
+    <div><label>Masala *</label><select id="np">${opts(prods, 'ProductID', nb.productId, 'Select…')}</select></div>
+    <div><label>Number of batches *</label><input id="nc" type="number" min="1" max="20" value="${esc(nb.count)}"></div>
+    <div><label>Date *</label><input id="nd" type="date" value="${nb.date}"></div>
+    <div><label>Grinding vendor</label><select id="ng">${opts(vendors, 'VendorID', '', 'Select…')}</select></div></div>
+    <label>Notes</label><input id="nn"><div id="pv" style="margin-top:14px"></div>
+    <div id="ferr" class="bad" style="font-size:13px;margin-top:8px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="lnk" id="cx">Cancel</button><button class="pri" id="sv3">Issue materials from stock</button></div></div>`;
+  const bind = (id, k, ev = 'input') => $(id).addEventListener(ev, e => { nb[k] = e.target.value; preview(); });
+  bind('#np', 'productId', 'change'); bind('#nc', 'count'); bind('#nd', 'date'); bind('#ng', 'grinder', 'change'); bind('#nn', 'notes');
+  $('#cx').onclick = drawList;
+  $('#sv3').onclick = issue;
+  preview();
+}
+
+function preview() {
+  const bom = boms.find(b => b.ProductID === nb.productId), n = Math.max(1, parseInt(nb.count) || 1);
+  $('#sv3').disabled = true;
+  if (!nb.productId) { $('#pv').innerHTML = ''; return; }
+  if (!bom) { $('#pv').innerHTML = `<p class="bad">This masala has no BOM yet. Add it in Masters → BOM.</p>`; return; }
+  let tot = 0, short = 0;
+  const rows = bom.lines.map(l => {
+    const need = Number(l.QtyG) * n / 1000, s = stock.find(x => x.MaterialID === l.MaterialID) || { QtyKg: 0, AvgRate: 0 };
+    const low = s.QtyKg < need - 0.0005; if (low) short++; tot += need * s.AvgRate;
+    return `<tr><td>${esc(mn(l.MaterialID))}</td><td class="n">${g(need)}</td><td class="n ${low ? 'bad' : ''}">${g(s.QtyKg)}${low ? ' (short)' : ''}</td><td class="n">${rs(s.AvgRate)}</td><td class="n">${rs(need * s.AvgRate)}</td></tr>`;
+  }).join('');
+  $('#pv').innerHTML = `<table><thead><tr><th>Material</th><th class="n">Needed (kg)</th><th class="n">In stock (kg)</th><th class="n">Avg ₹/kg</th><th class="n">Est. cost</th></tr></thead><tbody>${rows}</tbody>
+    <tfoot><tr><td colspan="4"><strong>Estimated material cost</strong></td><td class="n"><strong>${rs(tot)}</strong></td></tr></tfoot></table>` +
+    (short ? `<p class="bad">${short} material(s) are short of stock. Record the purchase first.</p>` : '');
+  $('#sv3').disabled = !!short;
+}
+
+async function issue() {
+  $('#sv3').disabled = true;
+  try {
+    const b = await Meima.call('batch.issue', { date: nb.date, productId: nb.productId, batchCount: parseInt(nb.count), grinderVendorId: nb.grinder, notes: nb.notes });
+    await load(); openBatch(b.BatchID);
+  } catch (e) { $('#ferr').textContent = e.message; $('#sv3').disabled = false; }
+}
+
+// ---------- step 2: complete + charges ----------
+function openBatch(id) {
+  const b = batches.find(x => x.BatchID === id); if (!b) return drawList();
+  chs = b.Charges.map(c => ({ ChargeID: c.ChargeID, ChargeTypeID: c.ChargeTypeID, Amount: c.Amount, Date: c.Date, VendorID: c.VendorID, Notes: c.Notes }));
+  $('#bar').innerHTML = `<button class="lnk" id="back">← All batches</button><span class="sp"></span><button class="lnk" id="del" style="color:#b00020">Cancel batch</button>`;
+  $('#back').onclick = drawList;
+  $('#del').onclick = async () => {
+    if (!confirm('Cancel this batch? The materials go back into stock.')) return;
+    try { await Meima.call('batch.remove', { batchId: id }); await load(); drawList(); } catch (e) { fail(e); }
+  };
+  const loss = b.LossKg !== null ? `${g(b.LossKg)} kg (${b.LossPercent}%)` : '–';
+  $('#body').innerHTML = `
+    <h2 style="margin:0 0 4px">${esc(pn(b.ProductID))} · ${esc(b.BatchID)} <span class="tag ${b.Status}">${b.Status}</span></h2>
+    <div style="font-size:13px;color:#8a7a68;margin-bottom:12px">${esc(b.Date)} · ${b.BatchCount} batch(es) · ${g(b.InputKg)} kg in${b.GrinderVendorID ? ' · grinder: ' + esc(vn(b.GrinderVendorID)) : ''}</div>
+    <div class="cards" id="cards"></div>
+    <div class="wrap sec"><h3>Materials issued (rates locked at issue)</h3><table><thead><tr><th>Material</th><th class="n">Qty (kg)</th><th class="n">Rate ₹/kg</th><th class="n">Cost</th></tr></thead><tbody>` +
+    b.Materials.map(m => `<tr><td>${esc(mn(m.MaterialID))}</td><td class="n">${g(m.QtyKg)}</td><td class="n">${rs(m.RatePerKg)}</td><td class="n">${rs(m.Cost)}</td></tr>`).join('') +
+    `</tbody><tfoot><tr><td colspan="3"><strong>Material cost</strong></td><td class="n"><strong>${rs(b.MaterialCost)}</strong></td></tr></tfoot></table></div>
+    <div class="wrap sec"><h3>Output from the grinder</h3><div class="grid">
+      <div><label>Output weight (kg) *</label><input id="oo" type="number" step="any" value="${esc(b.OutputKg)}"></div>
+      <div><label>Pockets *</label><input id="op" type="number" value="${esc(b.Pockets)}"></div>
+      <div><label>Pocket size (g)</label><input id="os" type="number" value="${esc(b.PocketSizeG)}"></div>
+      <div><label>Completed on</label><input id="od" type="date" value="${esc(b.CompletedDate) || today()}"></div></div>
+      <div id="oh" style="font-size:13px;margin-top:6px" class="warn"></div><div id="oerr" class="bad" style="font-size:13px"></div>
+      <div style="text-align:right;margin-top:10px"><button class="pri" id="osv">${b.Status === 'Completed' ? 'Update output' : 'Complete batch'}</button></div></div>
+    <div class="wrap sec"><h3>Charges for this batch</h3><div id="chips">` +
+    ctypes.map(t => `<button class="chip" data-t="${esc(t.ChargeTypeID)}">+ ${esc(t.Name)}</button>`).join('') + `</div><div id="chl"></div>
+      <div id="cerr" class="bad" style="font-size:13px"></div><div style="text-align:right;margin-top:10px"><button class="pri" id="csv">Save charges</button></div></div>`;
+  const hint = () => {
+    const o = Number($('#oo').value), s = Number($('#os').value), p = Number($('#op').value);
+    $('#oh').textContent = (o && s && p && p * s > o * 1000 * 1.02) ? `${p} pockets × ${s} g = ${g(p * s / 1000)} kg is more than the ${g(o)} kg output. Please double-check.` :
+      (o && s && !p ? `About ${Math.floor(o * 1000 / s)} pockets of ${s} g fit in ${g(o)} kg.` : '');
+  };
+  ['#oo', '#op', '#os'].forEach(i => $(i).oninput = hint); hint();
+  $('#osv').onclick = async () => {
+    try { await Meima.call('batch.complete', { batchId: id, outputKg: Number($('#oo').value), pockets: Number($('#op').value), pocketSizeG: Number($('#os').value), date: $('#od').value });
+      await load(); openBatch(id); } catch (e) { $('#oerr').textContent = e.message; }
+  };
+  $('#chips').querySelectorAll('[data-t]').forEach(c => c.onclick = () => { chs.push({ ChargeTypeID: c.dataset.t, Amount: '', Date: today(), VendorID: '', Notes: '' }); drawCharges(b); });
+  $('#csv').onclick = async () => {
+    try { await Meima.call('batch.saveCharges', { batchId: id, charges: chs.map(c => ({ ...c, Amount: Number(c.Amount) })) }); await load(); openBatch(id); }
+    catch (e) { $('#cerr').textContent = e.message; }
+  };
+  drawCharges(b);
+}
+
+function drawCharges(b) {
+  const live = chs.reduce((s, c) => s + (Number(c.Amount) || 0), 0), total = b.MaterialCost + live;
+  $('#chl').innerHTML = chs.length ? `<table><thead><tr><th>Type</th><th>Amount ₹</th><th>Date</th><th>Vendor</th><th>Notes</th><th></th></tr></thead><tbody>` +
+    chs.map((c, i) => `<tr><td><select data-k="${i}:ChargeTypeID">${opts(ctypes, 'ChargeTypeID', c.ChargeTypeID)}</select></td>
+      <td><input data-k="${i}:Amount" type="number" step="any" value="${esc(c.Amount)}" style="width:110px"></td>
+      <td><input data-k="${i}:Date" type="date" value="${esc(c.Date)}"></td>
+      <td><select data-k="${i}:VendorID">${opts(vendors, 'VendorID', c.VendorID, '–')}</select></td>
+      <td><input data-k="${i}:Notes" value="${esc(c.Notes)}"></td><td><button class="lnk" data-x="${i}">✕</button></td></tr>`).join('') + `</tbody></table>`
+    : `<div style="color:#8a7a68;font-size:13px;margin-bottom:8px">Tap a charge type above to add a line: grinding, packing, courier, other.</div>`;
+  $('#chl').querySelectorAll('[data-k]').forEach(el => el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => {
+    const [i, k] = el.dataset.k.split(':'); chs[i][k] = el.value; if (k === 'Amount') cards(b);
+  }));
+  $('#chl').querySelectorAll('[data-x]').forEach(x => x.onclick = () => { chs.splice(x.dataset.x, 1); drawCharges(b); });
+  cards(b);
+}
+
+function cards(b) {
+  const live = chs.reduce((s, c) => s + (Number(c.Amount) || 0), 0), total = b.MaterialCost + live;
+  const per = b.Pockets ? total / b.Pockets : null, perKg = b.OutputKg ? total / b.OutputKg : null;
+  $('#cards').innerHTML = `<div><span>Material cost</span><b>${rs(b.MaterialCost)}</b></div><div><span>Charges</span><b>${rs(live)}</b></div>
+    <div><span>Total batch cost</span><b>${rs(total)}</b></div><div><span>Cost per pocket</span><b>${rs(per === null ? null : Math.round(per * 100) / 100)}</b></div>
+    <div><span>Cost per kg</span><b>${rs(perKg === null ? null : Math.round(perKg * 100) / 100)}</b></div><div><span>Loss in grinding</span><b>${b.LossKg !== null ? g(b.LossKg) + ' kg (' + b.LossPercent + '%)' : '–'}</b></div>`;
+}
+</script>
+</body>
+</html>
