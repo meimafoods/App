@@ -39,6 +39,30 @@ const Meima = {
     return json.data;
   },
 
+  /** Small popup form. fields: [{k, l, t, v, o:[[value,label]]}]; ok(values) may throw to show an error. */
+  ask(title, fields, ok) {
+    let d = document.getElementById('mm-dlg');
+    if (!d) {
+      d = document.createElement('dialog'); d.id = 'mm-dlg';
+      d.style.cssText = 'border:1px solid #e4d8c8;border-radius:10px;width:min(420px,92vw);padding:16px;font:15px system-ui,sans-serif';
+      document.body.appendChild(d);
+    }
+    const e = x => String(x ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    const st = 'width:100%;padding:8px;border:1px solid #e4d8c8;border-radius:6px;font:inherit;box-sizing:border-box';
+    const btn = 'border:0;border-radius:6px;padding:8px 14px;cursor:pointer;';
+    d.innerHTML = `<h3 style="margin:0">${e(title)}</h3>` + fields.map(f => `<label style="display:block;margin:10px 0 4px;font-size:13px">${e(f.l)}</label>` +
+      (f.o ? `<select name="${f.k}" style="${st}">${f.o.map(o => `<option value="${e(o[0])}" ${o[0] === f.v ? 'selected' : ''}>${e(o[1])}</option>`).join('')}</select>`
+           : `<input name="${f.k}" type="${f.t || 'text'}" step="any" value="${e(f.v)}" style="${st}">`)).join('') +
+      `<div data-err style="color:#b00020;font-size:13px;margin-top:8px;min-height:16px"></div>
+       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button data-cx style="${btn}background:none;color:#7a2e1a">Cancel</button><button data-ok style="${btn}background:#7a2e1a;color:#fff">Save</button></div>`;
+    d.querySelector('[data-cx]').onclick = () => d.close();
+    d.querySelector('[data-ok]').onclick = async () => {
+      const v = {}; fields.forEach(f => { v[f.k] = d.querySelector(`[name="${f.k}"]`).value; });
+      try { await ok(v); d.close(); } catch (x) { d.querySelector('[data-err]').textContent = x.message; }
+    };
+    d.showModal();
+  },
+
   /** Shows a PIN screen when not logged in, then calls start(). Use on every new page. */
   requireLogin(start) {
     if (this.isLoggedIn()) return start();

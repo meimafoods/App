@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meima – Sales</title>
+<style>
+  :root{--brand:#7a2e1a;--bg:#faf5ee;--line:#e4d8c8;--ink:#2b2118}
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  main{max-width:1000px;margin:0 auto;padding:16px}
+  nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  nav button{border:1px solid var(--line);background:#fff;padding:7px 12px;border-radius:6px;cursor:pointer}
+  nav button.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .bar{display:flex;gap:8px;align-items:center;margin-bottom:10px}.bar .sp{flex:1}
+  button.pri{background:var(--brand);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer}
+  button.pri:disabled{opacity:.4;cursor:not-allowed}
+  button.lnk,a.lnk{background:none;border:0;color:var(--brand);cursor:pointer;padding:2px 6px;font:inherit;text-decoration:none}
+  .wrap{overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:8px}
+  table{border-collapse:collapse;width:100%}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{background:#f3e9dc;font-size:13px}
+  td.n,th.n{text-align:right}
+  input,select{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font:inherit}
+  label{display:block;margin:10px 0 4px;font-size:13px}
+  .grid{display:flex;gap:12px;flex-wrap:wrap}.grid>div{flex:1;min-width:160px}
+  #status{min-height:20px;margin-bottom:8px;font-size:13px}#status.err{color:#b00020}
+  .empty{padding:20px;text-align:center;color:#8a7a68}.sec{padding:16px}
+  .ok{color:#1b7a3a}.warn{color:#b26a00}.bad{color:#b00020}
+</style>
+</head>
+<body>
+<div id="hdr"></div>
+<main>
+  <nav id="nav"></nav>
+  <div id="status"></div>
+  <div class="bar" id="bar"></div>
+  <div class="wrap" id="tbl"></div>
+</main>
+
+<script src="meima-api.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const rs = n => Meima.money(n);
+const r2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
+const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const TABS = ['Invoices', 'Finished stock'];
+let tab = 'Invoices', invs = [], customers = [], prods = [], accts = [], fg = [], S = {}, ni = null;
+const cn = id => (customers.find(c => c.CustomerID === id) || {}).Name || id;
+const pn = id => (prods.find(p => p.ProductID === id) || {}).Name || id;
+const opts = (list, idk, sel, blank) => (blank ? `<option value="">${blank}</option>` : '') + list.map(x => `<option value="${esc(x[idk])}" ${x[idk] === sel ? 'selected' : ''}>${esc(x.Name)}</option>`).join('');
+const marginOf = c => (!c || c.MarginPercent === '' || c.MarginPercent === undefined) ? (Number(S.DefaultMarginPercent) || 0) : Number(c.MarginPercent);
+
+function status(msg, err) { const s = $('#status'); s.textContent = msg || ''; s.className = err ? 'err' : ''; }
+function fail(e) { status(e.message, true); if (!Meima.isLoggedIn()) location.reload(); }
+
+Meima.requireLogin(() => {
+  $('#hdr').innerHTML = Meima.header('Sales', '<a href="production.html" style="color:#7a2e1a;font-size:14px;margin-right:14px">Production</a><a href="masters.html" style="color:#7a2e1a;font-size:14px">Masters</a>');
+  show('Invoices');
+});
+
+async function show(t) {
+  tab = t; ni = null;
+  $('#nav').innerHTML = TABS.map(x => `<button class="${x === t ? 'on' : ''}" data-t="${x}">${x}</button>`).join('');
+  $('#nav').querySelectorAll('button').forEach(b => b.onclick = () => show(b.dataset.t));
+  status('Loading…');
+  try {
+    [customers, prods, accts, S] = await Promise.all([Meima.list('Customers'), Meima.list('Products'), Meima.list('Accounts'), Meima.settings()]);
+    if (t === 'Invoices') { invs = await Meima.call('invoice.list'); drawInvoices(); }
+    else { fg = await Meima.call('fg.list'); drawFg(); }
+    status('');
+  } catch (e) { fail(e); }
+}
+
+// ---------- invoices ----------
+function drawInvoices() {
+  $('#bar').innerHTML = `<strong>Invoices</strong><span class="sp"></span><button class="pri" id="add">+ New invoice</button>`;
+  $('#add').onclick = newInvoice;
+  if (!invs.length) { $('#tbl').innerHTML = `<div class="empty">No invoices yet.</div>`; return; }
+  $('#tbl').innerHTML = `<table><thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th class="n">Pockets</th><th class="n">Total</th><th class="n">Paid</th><th class="n">Balance</th><th></th></tr></thead><tbody>` +
+    invs.map((v, i) => `<tr><td>${esc(v.InvoiceNo)}</td><td>${esc(v.Date)}</td><td>${esc(cn(v.CustomerID))}</td><td class="n">${v.Pockets}</td><td class="n">${rs(v.Total)}</td><td class="n">${rs(v.Paid)}</td>
+      <td class="n ${v.Balance > 0 ? 'warn' : 'ok'}">${v.Balance > 0 ? rs(v.Balance) : '✓ Paid'}</td>
+      <td><a class="lnk" href="invoice.html?id=${encodeURIComponent(v.InvoiceID)}" target="_blank">View / PDF</a>${v.Balance > 0 ? `<button class="lnk" data-p="${i}">Receive</button>` : ''}<button class="lnk" data-d="${i}">Cancel</button></td></tr>`).join('') + `</tbody></table>`;
+  $('#tbl').querySelectorAll('[data-p]').forEach(b => b.onclick = () => receive(invs[b.dataset.p]));
+  $('#tbl').querySelectorAll('[data-d]').forEach(b => b.onclick = async () => {
+    if (!confirm('Cancel this invoice? The pockets return to finished stock.')) return;
+    try { await Meima.call('invoice.remove', { invoiceId: invs[b.dataset.d].InvoiceID }); show('Invoices'); } catch (e) { fail(e); }
+  });
+}
+
+function receive(v) {
+  Meima.ask('Receive payment · ' + v.InvoiceNo, [
+    { k: 'date', l: 'Date', t: 'date', v: today() }, { k: 'amount', l: `Amount ₹ (balance ${v.Balance})`, t: 'number', v: v.Balance },
+    { k: 'accountId', l: 'Received into', o: accts.map(a => [a.AccountID, a.Name]) }, { k: 'notes', l: 'Notes' }
+  ], async d => { await Meima.call('invoice.pay', { invoiceId: v.InvoiceID, date: d.date, accountId: d.accountId, amount: Number(d.amount), notes: d.notes }); show('Invoices'); });
+}
+
+async function newInvoice() {
+  try { fg = await Meima.call('fg.list'); } catch (e) { return fail(e); }
+  ni = { customerId: (customers[0] || {}).CustomerID || '', date: today(), notes: '', lines: [{ productId: '', pockets: '' }] };
+  drawEditor();
+}
+
+function drawEditor() {
+  $('#bar').innerHTML = `<strong>New invoice</strong>`;
+  $('#tbl').innerHTML = `<div class="sec"><div class="grid">
+    <div><label>Customer *</label><select id="ic">${opts(customers, 'CustomerID', ni.customerId, 'Select…')}</select></div>
+    <div><label>Date *</label><input id="id" type="date" value="${esc(ni.date)}"></div>
+    <div><label>Margin on cost</label><div id="im" style="padding:8px 0"></div></div></div>
+    <table style="margin-top:14px"><thead><tr><th>Masala</th><th class="n">Pockets</th><th class="n">In stock</th><th class="n">Cost / pocket</th><th class="n">Rate / pocket</th><th class="n">Amount</th><th></th></tr></thead><tbody>` +
+    ni.lines.map((l, i) => `<tr><td><select data-p="${i}">${opts(prods, 'ProductID', l.productId, 'Select…')}</select></td>
+      <td class="n"><input data-q="${i}" type="number" min="1" value="${esc(l.pockets)}" style="width:90px"></td>
+      <td class="n" id="s${i}"></td><td class="n" id="c${i}"></td><td class="n" id="r${i}"></td><td class="n" id="a${i}"></td><td><button class="lnk" data-x="${i}">✕</button></td></tr>`).join('') +
+    `</tbody><tfoot><tr><td colspan="5"><strong>Total</strong></td><td class="n" id="tot"></td><td></td></tr></tfoot></table>
+    <button class="lnk" id="al">+ Add item</button><label>Notes</label><input id="in" value="${esc(ni.notes)}">
+    <div id="ferr" class="bad" style="font-size:13px;margin-top:8px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="lnk" id="cx">Cancel</button><button class="pri" id="sv">Create invoice</button></div></div>`;
+  const q = s => [...$('#tbl').querySelectorAll(s)];
+  $('#ic').onchange = e => { ni.customerId = e.target.value; calc(); };
+  $('#id').oninput = e => ni.date = e.target.value;
+  $('#in').oninput = e => ni.notes = e.target.value;
+  q('[data-p]').forEach(s => s.onchange = () => { ni.lines[s.dataset.p].productId = s.value; calc(); });
+  q('[data-q]').forEach(i => i.oninput = () => { ni.lines[i.dataset.q].pockets = i.value; calc(); });
+  q('[data-x]').forEach(b => b.onclick = () => { ni.lines.splice(b.dataset.x, 1); if (!ni.lines.length) ni.lines.push({ productId: '', pockets: '' }); drawEditor(); });
+  $('#al').onclick = () => { ni.lines.push({ productId: '', pockets: '' }); drawEditor(); };
+  $('#cx').onclick = () => show('Invoices');
+  $('#sv').onclick = createInvoice;
+  calc();
+}
+
+function calc() {
+  const m = marginOf(customers.find(c => c.CustomerID === ni.customerId));
+  $('#im').textContent = ni.customerId ? m + '% (cost + margin)' : '';
+  let tot = 0, bad = false; const used = {};
+  ni.lines.forEach((l, i) => {
+    const f = fg.find(x => x.ProductID === l.productId), q = parseInt(l.pockets) || 0;
+    used[l.productId] = (used[l.productId] || 0) + q;
+    const rate = f ? r2(f.AvgCost * (1 + m / 100)) : 0;
+    if (f && used[l.productId] > f.Pockets) bad = true;
+    tot += q * rate;
+    $('#s' + i).innerHTML = f ? `<span class="${used[l.productId] > f.Pockets ? 'bad' : ''}">${f.Pockets}</span>` : '';
+    $('#c' + i).textContent = f ? rs(f.AvgCost) : ''; $('#r' + i).textContent = f ? rs(rate) : ''; $('#a' + i).textContent = q && f ? rs(q * rate) : '';
+  });
+  $('#tot').textContent = rs(tot);
+  $('#ferr').textContent = bad ? 'Some lines ask for more pockets than are in stock.' : '';
+  $('#sv').disabled = bad;
+}
+
+async function createInvoice() {
+  const err = m => { $('#ferr').textContent = m; };
+  if (!ni.customerId) return err('Select a customer');
+  if (ni.lines.some(l => !l.productId || !(parseInt(l.pockets) >= 1))) return err('Every item needs a masala and pockets');
+  try {
+    const v = await Meima.call('invoice.create', { date: ni.date, customerId: ni.customerId, notes: ni.notes, lines: ni.lines.map(l => ({ productId: l.productId, pockets: parseInt(l.pockets) })) });
+    window.open('invoice.html?id=' + encodeURIComponent(v.InvoiceID), '_blank');
+    show('Invoices');
+  } catch (e) { err(e.message); }
+}
+
+// ---------- finished stock ----------
+function drawFg() {
+  $('#bar').innerHTML = `<strong>Finished stock (pockets)</strong><span class="sp"></span><button class="pri" id="adj">± Adjust</button>`;
+  $('#adj').onclick = () => Meima.ask('Adjust finished stock', [
+    { k: 'date', l: 'Date', t: 'date', v: today() }, { k: 'productId', l: 'Masala', o: prods.map(p => [p.ProductID, p.Name]) },
+    { k: 'kind', l: 'Type', o: [['IN', 'Add pockets (opening stock)'], ['OUT', 'Remove pockets (sample / damaged)']] },
+    { k: 'pockets', l: 'Pockets', t: 'number' }, { k: 'unitCost', l: 'Cost per pocket ₹ (needed when adding)', t: 'number' }, { k: 'notes', l: 'Notes' }
+  ], async d => { await Meima.call('fg.adjust', { date: d.date, productId: d.productId, kind: d.kind, pockets: Number(d.pockets), unitCost: Number(d.unitCost), notes: d.notes }); show('Finished stock'); });
+  if (!fg.length) { $('#tbl').innerHTML = `<div class="empty">Add products in Masters first.</div>`; return; }
+  $('#tbl').innerHTML = `<table><thead><tr><th>Masala</th><th class="n">Pocket (g)</th><th class="n">Pockets in stock</th><th class="n">Avg cost / pocket</th><th class="n">Stock value</th><th class="n">Price @ ${Number(S.DefaultMarginPercent) || 0}% margin</th></tr></thead><tbody>` +
+    fg.map(f => `<tr><td>${esc(f.Name)}</td><td class="n">${esc(f.PocketSizeG)}</td><td class="n">${f.Pockets}</td><td class="n">${f.AvgCost ? rs(f.AvgCost) : '–'}</td><td class="n">${rs(f.Value)}</td><td class="n">${f.AvgCost ? rs(f.DefaultPrice) : '–'}</td></tr>`).join('') + `</tbody></table>`;
+}
+</script>
+</body>
+</html>
