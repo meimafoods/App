@@ -49,7 +49,7 @@
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt = n => Number(n).toLocaleString('en-IN');
-let P = [], B = [], M = [], S = {}, lastProd = '';
+let P = [], B = [], M = [], S = {}, ST = {}, lastProd = '';
 
 Meima.requireLogin(init);
 
@@ -57,8 +57,9 @@ async function init() {
   $('#hdr').innerHTML = Meima.header('Production Plan', '<a href="masters.html" style="color:#7a2e1a;font-size:14px">Masters</a>');
   $('#dt').value = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   try {
-    let boms;
-    [P, boms, M, S] = await Promise.all([Meima.list('Products'), Meima.call('bom.list'), Meima.list('Materials'), Meima.settings()]);
+    let boms, stk;
+    [P, boms, M, S, stk] = await Promise.all([Meima.list('Products'), Meima.call('bom.list'), Meima.list('Materials'), Meima.settings(), Meima.call('stock.list')]);
+    stk.forEach(x => { ST[x.MaterialID] = x.QtyKg; });
     B = boms.flatMap(b => b.lines.map(l => ({ ProductID: b.ProductID, MaterialID: l.MaterialID, QtyG: l.QtyG })));
     P.forEach(p => { const b = boms.find(x => x.ProductID === p.ProductID); p.StdBatchInputKg = b ? Number(b.BatchSizeG) / 1000 : 0; });
   } catch (e) {
@@ -91,13 +92,15 @@ function render() {
   $('#status').textContent = (std && per !== std)
     ? `Note: this BOM totals ${fmt(per)} g but the standard batch is ${fmt(std)} g. Check the BOM in Masters.` : '';
 
+  const short = rows.filter(r => (ST[r.MaterialID] || 0) < Number(r.QtyG || 0) * n / 1000).length;
+  if (short) $('#status').textContent += ` ${short} material(s) are short of stock.`;
   const batchHeads = n > 1 ? Array.from({ length: n }, (_, i) => `<th>Batch ${i + 1} (g)</th>`).join('') : '';
   const body = rows.map(r => {
-    const q = Number(r.QtyG || 0);
+    const q = Number(r.QtyG || 0), have = Number(ST[r.MaterialID] || 0);
     const cells = n > 1 ? `<td>${fmt(q)}</td>`.repeat(n) : '';
-    return `<tr><td>${esc(name(r.MaterialID))}</td><td>${fmt(q)}</td>${cells}<td><strong>${fmt(q * n)}</strong></td><td>${(q * n / 1000).toFixed(3)}</td></tr>`;
+    return `<tr><td>${esc(name(r.MaterialID))}</td><td>${fmt(q)}</td>${cells}<td><strong>${fmt(q * n)}</strong></td><td>${(q * n / 1000).toFixed(3)}</td><td style="color:${have < q * n / 1000 ? '#b00020' : '#1b7a3a'}">${have.toFixed(3)}${have < q * n / 1000 ? ' (short)' : ''}</td></tr>`;
   }).join('');
-  const foot = `<tr><td>Total</td><td>${fmt(per)}</td>${n > 1 ? `<td>${fmt(per)}</td>`.repeat(n) : ''}<td>${fmt(per * n)}</td><td>${(per * n / 1000).toFixed(3)}</td></tr>`;
+  const foot = `<tr><td>Total</td><td>${fmt(per)}</td>${n > 1 ? `<td>${fmt(per)}</td>`.repeat(n) : ''}<td>${fmt(per * n)}</td><td>${(per * n / 1000).toFixed(3)}</td><td></td></tr>`;
 
   const date = $('#dt').value;
   document.title = `Production Plan - ${prod.Name} x${n} - ${date}`;
@@ -116,7 +119,7 @@ function render() {
       <div><span>Total input</span>${(per * n / 1000).toFixed(3)} kg</div>
     </div>
     <table>
-      <thead><tr><th>Material</th><th>Per batch (g)</th>${batchHeads}<th>Total to issue (g)</th><th>Total (kg)</th></tr></thead>
+      <thead><tr><th>Material</th><th>Per batch (g)</th>${batchHeads}<th>Total to issue (g)</th><th>Total (kg)</th><th>In stock (kg)</th></tr></thead>
       <tbody>${body}</tbody><tfoot>${foot}</tfoot>
     </table>
     <div class="sign"><div>Issued by (Stock)</div><div>Received by (Production)</div><div>Approved by</div></div>`;

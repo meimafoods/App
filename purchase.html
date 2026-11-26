@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meima – Purchase & Stock</title>
+<style>
+  :root{--brand:#7a2e1a;--bg:#faf5ee;--line:#e4d8c8;--ink:#2b2118}
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  main{max-width:1000px;margin:0 auto;padding:16px}
+  nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  nav button{border:1px solid var(--line);background:#fff;padding:7px 12px;border-radius:6px;cursor:pointer}
+  nav button.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .bar{display:flex;gap:8px;align-items:center;margin-bottom:10px}.bar .sp{flex:1}
+  button.pri{background:var(--brand);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer}
+  button.lnk{background:none;border:0;color:var(--brand);cursor:pointer;padding:2px 6px}
+  .wrap{overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:8px}
+  table{border-collapse:collapse;width:100%}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{background:#f3e9dc;font-size:13px}
+  td.n,th.n{text-align:right}
+  input,select{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font:inherit}
+  label{display:block;margin:10px 0 4px;font-size:13px}
+  dialog{border:1px solid var(--line);border-radius:10px;width:min(420px,92vw);padding:16px}
+  .row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+  .grid{display:flex;gap:12px;flex-wrap:wrap}.grid>div{flex:1;min-width:160px}
+  #status{min-height:20px;margin-bottom:8px;font-size:13px}#status.err{color:#b00020}
+  .empty{padding:20px;text-align:center;color:#8a7a68}
+  .ok{color:#1b7a3a}.warn{color:#b26a00}.bad{color:#b00020}
+  .cards{display:flex;gap:10px;flex-wrap:wrap;padding:12px}.cards div{background:#faf5ee;border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+  .cards span{display:block;font-size:12px;color:#8a7a68}
+</style>
+</head>
+<body>
+<div id="hdr"></div>
+<main>
+  <nav id="nav"></nav>
+  <div id="status"></div>
+  <div class="bar" id="bar"></div>
+  <div class="wrap" id="tbl"></div>
+</main>
+<dialog id="dlg"><form method="dialog" id="frm"></form></dialog>
+
+<script src="meima-api.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const g = n => Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 3 });
+const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const TABS = ['Purchases', 'Stock', 'Price history'];
+let tab = 'Purchases', bills = [], vendors = [], mats = [], accts = [], stock = [], ed = null, phMat = '';
+const vn = id => (vendors.find(v => v.VendorID === id) || {}).Name || id;
+const mn = id => (mats.find(m => m.MaterialID === id) || {}).Name || id;
+const opts = (list, idk, sel, blank) => (blank ? `<option value="">${blank}</option>` : '') +
+  list.map(x => `<option value="${esc(x[idk])}" ${x[idk] === sel ? 'selected' : ''}>${esc(x.Name)}</option>`).join('');
+
+function status(msg, err) { const s = $('#status'); s.textContent = msg || ''; s.className = err ? 'err' : ''; }
+function fail(e) { status(e.message, true); if (!Meima.isLoggedIn()) location.reload(); }
+
+Meima.requireLogin(async () => {
+  $('#hdr').innerHTML = Meima.header('Purchase & Stock', '<a href="masters.html" style="color:#7a2e1a;font-size:14px">Masters</a>');
+  show('Purchases');
+});
+
+async function show(t) {
+  tab = t; ed = null;
+  $('#nav').innerHTML = TABS.map(x => `<button class="${x === t ? 'on' : ''}" data-t="${x}">${x}</button>`).join('');
+  $('#nav').querySelectorAll('button').forEach(b => b.onclick = () => show(b.dataset.t));
+  status('Loading…');
+  try {
+    [vendors, mats, accts] = await Promise.all([Meima.list('Vendors'), Meima.list('Materials'), Meima.list('Accounts')]);
+    if (t === 'Purchases') { bills = await Meima.call('purchase.list'); drawBills(); }
+    else if (t === 'Stock') { stock = await Meima.call('stock.list'); drawStock(); }
+    else await drawPrice();
+    status('');
+  } catch (e) { fail(e); }
+}
+
+/** Small popup form: fields [{k,l,t,v,o:[[value,label]]}] */
+function ask(title, fields, ok) {
+  $('#frm').innerHTML = `<h3 style="margin:0">${title}</h3>` + fields.map(f => `<label>${f.l}</label>` + (f.o
+    ? `<select name="${f.k}">${f.o.map(o => `<option value="${esc(o[0])}" ${o[0] === f.v ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`
+    : `<input name="${f.k}" type="${f.t || 'text'}" step="any" value="${esc(f.v ?? '')}">`)).join('') +
+    `<div id="ferr" class="bad" style="font-size:13px;margin-top:8px"></div>
+     <div class="row"><button type="button" class="lnk" id="cx">Cancel</button><button type="button" class="pri" id="sv">Save</button></div>`;
+  $('#cx').onclick = () => $('#dlg').close();
+  $('#sv').onclick = async () => {
+    const d = {}; fields.forEach(f => d[f.k] = $('#frm').elements[f.k].value);
+    try { await ok(d); $('#dlg').close(); show(tab); } catch (e) { $('#ferr').textContent = e.message; }
+  };
+  $('#dlg').showModal();
+}
+
+// ---------- purchases ----------
+function drawBills() {
+  $('#bar').innerHTML = `<strong>Purchases</strong><span class="sp"></span><button class="pri" id="add">+ New purchase</button>`;
+  $('#add').onclick = () => edit(null);
+  if (!bills.length) { $('#tbl').innerHTML = `<div class="empty">No purchases yet.</div>`; return; }
+  $('#tbl').innerHTML = `<table><thead><tr><th>Date</th><th>Vendor</th><th>Bill no</th><th>Items</th><th class="n">Total</th><th class="n">Paid</th><th class="n">Balance</th><th></th></tr></thead><tbody>` +
+    bills.map((b, i) => `<tr><td>${esc(b.Date)}</td><td>${esc(vn(b.VendorID))}</td><td>${esc(b.BillNo)}</td>
+      <td>${esc(b.lines.map(l => mn(l.MaterialID) + ' ' + g(l.QtyKg) + 'kg').join(', '))}</td>
+      <td class="n">${Meima.money(b.Total)}</td><td class="n">${Meima.money(b.Paid)}</td><td class="n ${b.Balance > 0 ? 'warn' : 'ok'}">${b.Balance > 0 ? Meima.money(b.Balance) : '✓'}</td>
+      <td>${b.Balance > 0 ? `<button class="lnk" data-p="${i}">Pay</button>` : ''}<button class="lnk" data-e="${i}">Edit</button><button class="lnk" data-d="${i}">Remove</button></td></tr>`).join('') + `</tbody></table>`;
+  $('#tbl').querySelectorAll('[data-e]').forEach(b => b.onclick = () => edit(bills[b.dataset.e]));
+  $('#tbl').querySelectorAll('[data-p]').forEach(b => b.onclick = () => pay(bills[b.dataset.p]));
+  $('#tbl').querySelectorAll('[data-d]').forEach(b => b.onclick = async () => {
+    if (!confirm('Remove this purchase and its stock entries?')) return;
+    try { await Meima.call('purchase.remove', { billId: bills[b.dataset.d].BillID }); show('Purchases'); } catch (e) { fail(e); }
+  });
+}
+
+function pay(b) {
+  ask('Record payment · ' + vn(b.VendorID), [
+    { k: 'date', l: 'Date', t: 'date', v: today() }, { k: 'amount', l: `Amount ₹ (balance ${b.Balance})`, t: 'number', v: b.Balance },
+    { k: 'accountId', l: 'Paid from', o: accts.map(a => [a.AccountID, a.Name]) }, { k: 'notes', l: 'Notes' }
+  ], d => Meima.call('purchase.pay', { billId: b.BillID, date: d.date, accountId: d.accountId, amount: Number(d.amount), notes: d.notes }));
+}
+
+function edit(b) {
+  ed = b ? { billId: b.BillID, date: b.Date, vendorId: b.VendorID, billNo: b.BillNo, notes: b.Notes, lines: b.lines.map(l => ({ MaterialID: l.MaterialID, QtyKg: l.QtyKg, RatePerKg: l.RatePerKg })) }
+         : { billId: '', date: today(), vendorId: '', billNo: '', notes: '', paidAmount: '', accountId: (accts[0] || {}).AccountID, lines: [{ MaterialID: '', QtyKg: '', RatePerKg: '' }] };
+  drawEditor();
+}
+
+function drawEditor() {
+  $('#bar').innerHTML = `<strong>${ed.billId ? 'Edit' : 'New'} purchase</strong>`;
+  $('#tbl').innerHTML = `<div style="padding:16px">
+    <div class="grid">
+      <div><label>Date *</label><input id="ed" type="date" value="${esc(ed.date)}"></div>
+      <div><label>Vendor *</label><select id="ev">${opts(vendors, 'VendorID', ed.vendorId, 'Select…')}</select></div>
+      <div><label>Vendor bill no</label><input id="eb" value="${esc(ed.billNo)}"></div>
+    </div>
+    <table style="margin-top:14px"><thead><tr><th>Material</th><th>Qty (kg)</th><th>Rate ₹/kg</th><th class="n">Amount</th><th></th></tr></thead><tbody>` +
+    ed.lines.map((l, i) => `<tr><td><select data-m="${i}">${opts(mats, 'MaterialID', l.MaterialID, 'Select…')}</select></td>
+      <td><input data-q="${i}" type="number" step="any" value="${esc(l.QtyKg)}" style="width:100px"></td>
+      <td><input data-r="${i}" type="number" step="any" value="${esc(l.RatePerKg)}" style="width:100px"></td>
+      <td class="n" id="a${i}"></td><td><button class="lnk" data-x="${i}">✕</button></td></tr>`).join('') +
+    `</tbody><tfoot><tr><td colspan="3"><strong>Total</strong></td><td class="n" id="tot"></td><td></td></tr></tfoot></table>
+    <button class="lnk" id="al">+ Add item</button>` +
+    (ed.billId ? '' : `<div class="grid"><div><label>Paid now ₹ (optional)</label><input id="ep" type="number" step="any" value="${esc(ed.paidAmount)}"></div>
+      <div><label>Paid from</label><select id="ea">${opts(accts, 'AccountID', ed.accountId)}</select></div></div>`) +
+    `<label>Notes</label><input id="en" value="${esc(ed.notes)}">
+    <div id="ferr" class="bad" style="font-size:13px;margin-top:8px"></div>
+    <div class="row"><button class="lnk" id="cx2">Cancel</button><button class="pri" id="sv2">Save purchase</button></div></div>`;
+  const q = s => [...$('#tbl').querySelectorAll(s)];
+  $('#ed').oninput = e => ed.date = e.target.value;
+  $('#ev').onchange = e => ed.vendorId = e.target.value;
+  $('#eb').oninput = e => ed.billNo = e.target.value;
+  $('#en').oninput = e => ed.notes = e.target.value;
+  if ($('#ep')) { $('#ep').oninput = e => ed.paidAmount = e.target.value; $('#ea').onchange = e => ed.accountId = e.target.value; }
+  q('[data-m]').forEach(s => s.onchange = () => ed.lines[s.dataset.m].MaterialID = s.value);
+  q('[data-q]').forEach(i => i.oninput = () => { ed.lines[i.dataset.q].QtyKg = i.value; calc(); });
+  q('[data-r]').forEach(i => i.oninput = () => { ed.lines[i.dataset.r].RatePerKg = i.value; calc(); });
+  q('[data-x]').forEach(b => b.onclick = () => { ed.lines.splice(b.dataset.x, 1); if (!ed.lines.length) ed.lines.push({ MaterialID: '', QtyKg: '', RatePerKg: '' }); drawEditor(); });
+  $('#al').onclick = () => { ed.lines.push({ MaterialID: '', QtyKg: '', RatePerKg: '' }); drawEditor(); };
+  $('#cx2').onclick = () => show('Purchases');
+  $('#sv2').onclick = savePurchase;
+  calc();
+}
+
+function calc() {
+  let t = 0;
+  ed.lines.forEach((l, i) => { const a = (Number(l.QtyKg) || 0) * (Number(l.RatePerKg) || 0); t += a; $('#a' + i).textContent = a ? Meima.money(a) : ''; });
+  $('#tot').textContent = Meima.money(t);
+}
+
+async function savePurchase() {
+  const err = m => { $('#ferr').textContent = m; };
+  if (!ed.date) return err('Date is required');
+  if (!ed.vendorId) return err('Select a vendor');
+  if (ed.lines.some(l => !l.MaterialID || !(Number(l.QtyKg) > 0) || !(Number(l.RatePerKg) > 0))) return err('Every item needs a material, quantity and rate');
+  try {
+    await Meima.call('purchase.save', { billId: ed.billId, date: ed.date, vendorId: ed.vendorId, billNo: ed.billNo, notes: ed.notes,
+      paidAmount: Number(ed.paidAmount) || 0, accountId: ed.accountId,
+      lines: ed.lines.map(l => ({ MaterialID: l.MaterialID, QtyKg: Number(l.QtyKg), RatePerKg: Number(l.RatePerKg) })) });
+    show('Purchases');
+  } catch (e) { err(e.message); }
+}
+
+// ---------- stock ----------
+function drawStock() {
+  $('#bar').innerHTML = `<strong>Current stock</strong><span class="sp"></span><button class="pri" id="adj">± Adjust stock</button>`;
+  $('#adj').onclick = () => ask('Adjust stock', [
+    { k: 'date', l: 'Date', t: 'date', v: today() }, { k: 'materialId', l: 'Material', o: mats.map(m => [m.MaterialID, m.Name]) },
+    { k: 'kind', l: 'Type', o: [['IN', 'Add stock (opening stock / found)'], ['OUT', 'Remove stock (wastage / spillage)']] },
+    { k: 'qtyKg', l: 'Quantity (kg)', t: 'number' }, { k: 'ratePerKg', l: 'Rate ₹/kg (needed when adding)', t: 'number' }, { k: 'notes', l: 'Notes' }
+  ], d => Meima.call('stock.adjust', { date: d.date, materialId: d.materialId, kind: d.kind, qtyKg: Number(d.qtyKg), ratePerKg: Number(d.ratePerKg), notes: d.notes }));
+  if (!stock.length) { $('#tbl').innerHTML = `<div class="empty">Add materials in Masters first.</div>`; return; }
+  const total = stock.reduce((s, x) => s + x.Value, 0);
+  $('#tbl').innerHTML = `<table><thead><tr><th>Material</th><th class="n">Stock (kg)</th><th class="n">Avg rate ₹/kg</th><th class="n">Value</th><th class="n">Last rate</th><th>Last bought</th><th class="n">Min (kg)</th><th></th></tr></thead><tbody>` +
+    stock.map(s => `<tr><td>${esc(s.Name)}</td><td class="n">${g(s.QtyKg)}</td><td class="n">${s.AvgRate ? Meima.money(s.AvgRate) : '–'}</td><td class="n">${Meima.money(s.Value)}</td>
+      <td class="n">${s.LastRate ? Meima.money(s.LastRate) : '–'}</td><td>${esc(s.LastDate)}</td><td class="n">${s.MinStockKg || ''}</td>
+      <td class="${s.Flag === 'negative' ? 'bad' : 'warn'}">${s.Flag === 'negative' ? 'Negative stock' : s.Flag === 'low' ? 'Low stock' : ''}</td></tr>`).join('') +
+    `</tbody><tfoot><tr><td colspan="3"><strong>Total stock value</strong></td><td class="n"><strong>${Meima.money(total)}</strong></td><td colspan="4"></td></tr></tfoot></table>`;
+}
+
+// ---------- price history ----------
+async function drawPrice() {
+  phMat = phMat || (mats[0] || {}).MaterialID || '';
+  $('#bar').innerHTML = `<strong>Price history</strong><select id="pm" style="width:auto;margin-left:8px">${opts(mats, 'MaterialID', phMat)}</select>`;
+  $('#pm').onchange = e => { phMat = e.target.value; drawPrice(); };
+  const h = phMat ? await Meima.call('price.history', { materialId: phMat }) : [];
+  if (!h.length) { $('#tbl').innerHTML = `<div class="empty">No purchases recorded for this material.</div>`; return; }
+  const r = h.map(x => x.RatePerKg), last = r[r.length - 1], prev = r.length > 1 ? r[r.length - 2] : null;
+  const chg = prev ? ((last - prev) / prev * 100) : null;
+  const W = 640, H = 140, P = 24, lo = Math.min(...r), hi = Math.max(...r), span = hi - lo || 1;
+  const pts = r.map((v, i) => [P + (r.length > 1 ? i * (W - 2 * P) / (r.length - 1) : (W - 2 * P) / 2), H - P - (v - lo) / span * (H - 2 * P)]);
+  $('#tbl').innerHTML = `<div class="cards">
+      <div><span>Last rate</span>${Meima.money(last)}</div>
+      <div><span>Change vs previous</span><b class="${chg > 0 ? 'bad' : 'ok'}">${chg === null ? '–' : (chg > 0 ? '+' : '') + chg.toFixed(1) + '%'}</b></div>
+      <div><span>Lowest</span>${Meima.money(lo)}</div><div><span>Highest</span>${Meima.money(hi)}</div>
+      <div><span>Average of purchases</span>${Meima.money(r.reduce((a, b) => a + b, 0) / r.length)}</div></div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;display:block;margin:0 12px 12px"><polyline fill="none" stroke="#7a2e1a" stroke-width="2" points="${pts.map(p => p.join(',')).join(' ')}"/>` +
+    pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="3.5" fill="#7a2e1a"><title>${h[i].Date}: ₹${r[i]}</title></circle>`).join('') +
+    `<text x="${P}" y="12" font-size="11" fill="#8a7a68">₹${hi}</text><text x="${P}" y="${H - 6}" font-size="11" fill="#8a7a68">₹${lo}</text></svg>
+    <table><thead><tr><th>Date</th><th>Vendor</th><th class="n">Qty (kg)</th><th class="n">Rate ₹/kg</th></tr></thead><tbody>` +
+    h.slice().reverse().map(x => `<tr><td>${esc(x.Date)}</td><td>${esc(vn(x.VendorID))}</td><td class="n">${g(x.QtyKg)}</td><td class="n">${Meima.money(x.RatePerKg)}</td></tr>`).join('') + `</tbody></table>`;
+}
+</script>
+</body>
+</html>
