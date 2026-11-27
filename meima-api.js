@@ -10,7 +10,7 @@ const Meima = {
   LOGO_BADGE: 'assets/logo-badge.png',  // oval only (page headers)
 
   PAGES: [['masters.html', 'Masters'], ['purchase.html', 'Purchase & Stock'], ['production-plan.html', 'Production plan'],
-          ['production.html', 'Production'], ['sales.html', 'Sales & invoices'], ['cash.html', 'Cash & expenses']],
+          ['production.html', 'Production'], ['sales.html', 'Sales & invoices'], ['cash.html', 'Cash & expenses'], ['reports.html', 'Reports']],
 
   /** Dropdown menu linking every page: Meima.header('Title', Meima.menu('this-page.html')). Add new pages to PAGES. */
   menu(current) {

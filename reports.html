@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meima – Reports</title>
+<style>
+  :root{--brand:#7a2e1a;--bg:#faf5ee;--line:#e4d8c8;--ink:#2b2118}
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  main{max-width:1050px;margin:0 auto;padding:16px}
+  nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  nav button{border:1px solid var(--line);background:#fff;padding:7px 12px;border-radius:6px;cursor:pointer}
+  nav button.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .ctl{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:12px}.ctl .sp{flex:1}
+  .ctl label{display:block;font-size:13px;margin-bottom:3px}
+  input,select{padding:8px;border:1px solid var(--line);border-radius:6px;font:inherit}
+  button.pri{background:var(--brand);color:#fff;border:0;padding:9px 14px;border-radius:6px;cursor:pointer}
+  .wrap{overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:8px;margin-bottom:14px}
+  table{border-collapse:collapse;width:100%}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{background:#f3e9dc;font-size:13px}td.n,th.n{text-align:right}
+  tr.t td{font-weight:700;background:#faf5ee}tr.s td{padding-left:28px;color:#5b4b3b}
+  h2{margin:4px 0 2px;font-size:19px;color:var(--brand)}h3{margin:16px 0 6px;font-size:15px}
+  .sub{font-size:13px;color:#8a7a68;margin-bottom:12px}
+  #status{min-height:20px;margin-bottom:8px;font-size:13px}#status.err{color:#b00020}
+  .cards{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}.cards div{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 14px;min-width:140px}
+  .cards span{display:block;font-size:12px;color:#8a7a68}.cards b{font-size:17px}
+  .note{background:#fff8e6;border:1px solid #f0dfae;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:14px}
+  .ok{color:#1b7a3a}.warn{color:#b26a00}.bad{color:#b00020}.empty{padding:18px;text-align:center;color:#8a7a68}
+  @media print{#hdr,nav,.ctl{display:none!important}body{background:#fff}main{max-width:none;padding:0}.wrap{border-color:#ccc}}
+</style>
+</head>
+<body>
+<div id="hdr"></div>
+<main>
+  <nav id="nav"></nav>
+  <div class="ctl" id="ctl"></div>
+  <div id="status"></div>
+  <h2 id="ptitle"></h2><div class="sub" id="psub"></div>
+  <div id="body"></div>
+</main>
+
+<script src="meima-api.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const rs = n => Meima.money(n);
+const g = n => Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 3 });
+const sum = (a, f) => a.reduce((t, x) => t + (Number(typeof f === 'function' ? f(x) : x[f]) || 0), 0);
+const pct = (a, b) => b ? (a / b * 100).toFixed(1) + '%' : '–';
+const iso = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const TABS = ['Profit & Loss', 'Income', 'Expenses', 'Stock value', 'Batches'];
+const PRESETS = [['month', 'This month'], ['last', 'Last month'], ['fy', 'This financial year (Apr–Mar)'], ['all', 'All time'], ['custom', 'Custom']];
+let tab = 'Profit & Loss', preset = 'month', from = '', to = '', loaded = false;
+let inv = [], pur = [], bat = [], exp = [], types = [], stk = [], fg = [], custs = [], prods = [], mats = [];
+const cn = id => (custs.find(c => c.CustomerID === id) || {}).Name || id;
+const pn = id => (prods.find(p => p.ProductID === id) || {}).Name || id;
+const tn = id => (types.find(t => t.ChargeTypeID === id) || {}).Name || 'Charge';
+const inR = d => d >= from && d <= to;
+
+function status(msg, err) { const s = $('#status'); s.textContent = msg || ''; s.className = err ? 'err' : ''; }
+function fail(e) { status(e.message, true); if (!Meima.isLoggedIn()) location.reload(); }
+function setPreset(p) {
+  const n = new Date(), y = n.getFullYear(), m = n.getMonth();
+  if (p === 'month') { from = iso(new Date(y, m, 1)); to = iso(n); }
+  else if (p === 'last') { from = iso(new Date(y, m - 1, 1)); to = iso(new Date(y, m, 0)); }
+  else if (p === 'fy') { from = iso(new Date(m >= 3 ? y : y - 1, 3, 1)); to = iso(n); }
+  else if (p === 'all') { from = '0000-01-01'; to = '9999-12-31'; }
+  preset = p;
+}
+
+Meima.requireLogin(async () => {
+  $('#hdr').innerHTML = Meima.header('Reports', Meima.menu('reports.html'));
+  setPreset('month');
+  status('Loading…');
+  try {
+    [inv, pur, bat, exp, types, stk, fg, custs, prods, mats] = await Promise.all([Meima.call('invoice.list'), Meima.call('purchase.list'), Meima.call('batch.list'),
+      Meima.call('expense.list'), Meima.list('ChargeTypes', true), Meima.call('stock.list'), Meima.call('fg.list'), Meima.list('Customers', true), Meima.list('Products', true), Meima.list('Materials', true)]);
+    loaded = true; status(''); draw();
+  } catch (e) { fail(e); }
+});
+
+const tbl = (heads, rows, foot) => `<div class="wrap"><table><thead><tr>${heads.map((h, i) => `<th class="${i ? 'n' : ''}">${h}</th>`).join('')}</tr></thead><tbody>${rows || ''}</tbody>${foot ? `<tfoot>${foot}</tfoot>` : ''}</table></div>`;
+const row = (cells, cls) => `<tr class="${cls || ''}">${cells.map((c, i) => `<td class="${i ? 'n' : ''}">${c}</td>`).join('')}</tr>`;
+const none = '<div class="empty">Nothing in this period.</div>';
+
+function draw() {
+  $('#nav').innerHTML = TABS.map(t => `<button class="${t === tab ? 'on' : ''}" data-t="${t}">${t}</button>`).join('');
+  $('#nav').querySelectorAll('button').forEach(b => b.onclick = () => { tab = b.dataset.t; draw(); });
+  const dated = tab !== 'Stock value';
+  $('#ctl').innerHTML = dated ? `<div><label>Period</label><select id="pp">${PRESETS.map(p => `<option value="${p[0]}" ${p[0] === preset ? 'selected' : ''}>${p[1]}</option>`).join('')}</select></div>
+    <div><label>From</label><input id="f" type="date" value="${from.startsWith('0000') ? '' : from}"></div><div><label>To</label><input id="t" type="date" value="${to.startsWith('9999') ? '' : to}"></div>
+    <span class="sp"></span><button class="pri" onclick="window.print()">Print / Save as PDF</button>` : `<span class="sp"></span><button class="pri" onclick="window.print()">Print / Save as PDF</button>`;
+  if (dated) {
+    $('#pp').onchange = e => { if (e.target.value !== 'custom') setPreset(e.target.value); preset = e.target.value; draw(); };
+    const manual = () => { from = $('#f').value || '0000-01-01'; to = $('#t').value || '9999-12-31'; preset = 'custom'; draw(); };
+    $('#f').onchange = manual; $('#t').onchange = manual;
+  }
+  $('#ptitle').textContent = tab;
+  $('#psub').textContent = (dated ? `${from.startsWith('0000') ? 'Beginning' : from} to ${to.startsWith('9999') ? 'today' : to} · ` : 'As of today · ') + 'Meima Foods';
+  $('#body').innerHTML = { 'Profit & Loss': pl, Income: income, Expenses: expenses, 'Stock value': stockValue, Batches: batches }[tab]();
+}
+
+// ---------- profit & loss ----------
+function pl() {
+  const I = inv.filter(v => inR(v.Date)), E = exp.filter(e => inR(e.Date));
+  const rev = sum(I, 'SubTotal'), cogs = sum(I, 'Cost'), gross = rev - cogs, other = sum(E, 'Amount'), net = gross - other;
+  const cats = {}; E.forEach(e => { cats[e.Category] = (cats[e.Category] || 0) + Number(e.Amount); });
+  const months = {};
+  const m = (d, k, v) => { const key = d.slice(0, 7); (months[key] = months[key] || { r: 0, c: 0, o: 0 })[k] += v; };
+  I.forEach(v => { m(v.Date, 'r', v.SubTotal); m(v.Date, 'c', v.Cost); }); E.forEach(e => m(e.Date, 'o', Number(e.Amount)));
+  const ks = Object.keys(months).sort();
+  return `<div class="cards"><div><span>Sales</span><b>${rs(rev)}</b></div><div><span>Gross profit</span><b class="${gross >= 0 ? 'ok' : 'bad'}">${rs(gross)}</b></div>
+      <div><span>Net profit</span><b class="${net >= 0 ? 'ok' : 'bad'}">${rs(net)}</b></div><div><span>Net margin</span><b>${pct(net, rev)}</b></div></div>` +
+    tbl(['', 'Amount', '% of sales'],
+      row(['Sales (excluding GST)', rs(rev), '100%'], 't') +
+      row(['Cost of goods sold <small>(materials, grinding, packing, courier in the pockets sold)</small>', '− ' + rs(cogs), pct(cogs, rev)]) +
+      row(['Gross profit', rs(gross), pct(gross, rev)], 't') +
+      Object.keys(cats).map(c => row([esc(c), '− ' + rs(cats[c]), pct(cats[c], rev)], 's')).join('') +
+      row(['Other expenses', '− ' + rs(other), pct(other, rev)]) +
+      row(['Net profit', rs(net), pct(net, rev)], 't')) +
+    `<div class="note">Cost of goods sold counts only the pockets you have <b>sold</b>. Money spent on materials or batches you still hold is not a loss yet; see <b>Stock value</b>. GST collected (${rs(sum(I, 'TaxAmount'))}) is not income and is left out.</div>
+    <h3>By month</h3>` + (ks.length ? tbl(['Month', 'Sales', 'Cost of goods', 'Gross profit', 'Other expenses', 'Net profit'], ks.map(k => { const x = months[k]; const n = x.r - x.c - x.o;
+      return row([k, rs(x.r), rs(x.c), rs(x.r - x.c), rs(x.o), `<b class="${n >= 0 ? 'ok' : 'bad'}">${rs(n)}</b>`]); }).join('')) : none);
+}
+
+// ---------- income ----------
+function income() {
+  const I = inv.filter(v => inR(v.Date));
+  if (!I.length) return none;
+  const by = (keyf, namef) => { const o = {}; I.forEach(v => (keyf(v)).forEach(([k, x]) => { const r = o[k] = o[k] || { name: namef(k), n: 0, p: 0, s: 0, c: 0, inv: new Set() }; r.p += x.p; r.s += x.s; r.c += x.c; r.inv.add(v.InvoiceID); })); return Object.values(o).sort((a, b) => b.s - a.s); };
+  const byC = by(v => [[v.CustomerID, { p: v.Pockets, s: v.SubTotal, c: v.Cost }]], cn);
+  const byP = by(v => v.lines.map(l => [l.ProductID, { p: Number(l.Pockets), s: l.Amount, c: l.CostAmount }]), pn);
+  const rows = a => a.map(r => row([esc(r.name), r.inv.size, g(r.p), rs(r.s), rs(r.c), rs(r.s - r.c), pct(r.s - r.c, r.s)])).join('');
+  const foot = a => row(['Total', '', g(sum(a, 'p')), rs(sum(a, 's')), rs(sum(a, 'c')), rs(sum(a, 's') - sum(a, 'c')), pct(sum(a, 's') - sum(a, 'c'), sum(a, 's'))], 't');
+  const heads = n => [n, 'Invoices', 'Pockets', 'Sales', 'Cost', 'Profit', 'Margin'];
+  return `<div class="cards"><div><span>Invoiced (excl. GST)</span><b>${rs(sum(I, 'SubTotal'))}</b></div><div><span>Invoiced (incl. GST)</span><b>${rs(sum(I, 'Total'))}</b></div>
+      <div><span>Received so far</span><b class="ok">${rs(sum(I, 'Paid'))}</b></div><div><span>Still to receive</span><b class="warn">${rs(sum(I, 'Balance'))}</b></div></div>
+    <h3>By customer</h3>${tbl(heads('Customer'), rows(byC), foot(byC))}<h3>By masala</h3>${tbl(heads('Masala'), rows(byP), foot(byP))}
+    <h3>Invoices</h3>` + tbl(['Invoice', 'Date', 'Customer', 'Total', 'Paid', 'Balance', 'Status'], I.map(v => row([`<a href="invoice.html?id=${encodeURIComponent(v.InvoiceID)}" target="_blank">${esc(v.InvoiceNo)}</a>`, v.Date, esc(cn(v.CustomerID)), rs(v.Total), rs(v.Paid), rs(v.Balance), v.Status])).join(''));
+}
+
+// ---------- expenses (money spent, not the same as cost of goods sold) ----------
+function expenses() {
+  const spend = {};
+  const add = (k, v) => { spend[k] = (spend[k] || 0) + v; };
+  pur.filter(b => inR(b.Date)).forEach(b => add('Raw material purchases', Number(b.Total)));
+  bat.forEach(b => b.Charges.filter(c => inR(c.Date)).forEach(c => add(tn(c.ChargeTypeID) + ' (batch charges)', Number(c.Amount))));
+  exp.filter(e => inR(e.Date)).forEach(e => add(e.Category, Number(e.Amount)));
+  const ks = Object.keys(spend).sort((a, b) => spend[b] - spend[a]), total = sum(ks, k => spend[k]);
+  if (!ks.length) return none;
+  return `<div class="cards"><div><span>Total spent</span><b>${rs(total)}</b></div></div>` +
+    tbl(['Category', 'Amount', 'Share'], ks.map(k => row([esc(k), rs(spend[k]), pct(spend[k], total)])).join(''), row(['Total', rs(total), '100%'], 't')) +
+    `<div class="note">This is what you <b>spent</b> (bills by bill date, batch charges by charge date, other expenses by date), whether or not it is paid yet. The Profit &amp; Loss uses cost of goods sold instead, so the two totals differ by the stock you have bought or made but not sold.</div>`;
+}
+
+// ---------- stock value ----------
+function stockValue() {
+  const raw = sum(stk, 'Value'), fin = sum(fg, 'Value'), wip = sum(bat.filter(b => b.Status === 'Issued'), 'TotalCost');
+  return `<div class="cards"><div><span>Raw materials</span><b>${rs(raw)}</b></div><div><span>In production (issued, not completed)</span><b>${rs(wip)}</b></div>
+      <div><span>Finished pockets</span><b>${rs(fin)}</b></div><div style="border-color:var(--brand)"><span>Total stock value</span><b>${rs(raw + wip + fin)}</b></div></div>
+    <h3>Raw materials</h3>` + tbl(['Material', 'Stock (kg)', 'Avg ₹/kg', 'Value'], stk.map(s => row([esc(s.Name), g(s.QtyKg), s.AvgRate ? rs(s.AvgRate) : '–', rs(s.Value)])).join(''), row(['Total', '', '', rs(raw)], 't')) +
+    `<h3>Finished pockets</h3>` + tbl(['Masala', 'Pockets', 'Avg cost / pocket', 'Value'], fg.map(f => row([esc(f.Name), f.Pockets, f.AvgCost ? rs(f.AvgCost) : '–', rs(f.Value)])).join(''), row(['Total', '', '', rs(fin)], 't'));
+}
+
+// ---------- batches ----------
+function batches() {
+  const B = bat.filter(b => inR(b.Date));
+  if (!B.length) return none;
+  const done = B.filter(b => b.Status === 'Completed'), inp = sum(done, 'InputKg'), lost = sum(done, 'LossKg');
+  return `<div class="cards"><div><span>Batches</span><b>${B.length}</b></div><div><span>Total batch cost</span><b>${rs(sum(B, 'TotalCost'))}</b></div>
+      <div><span>Average grinding loss</span><b>${pct(lost, inp)}</b></div><div><span>Pockets made</span><b>${sum(done, 'Pockets')}</b></div></div>` +
+    tbl(['Batch', 'Date', 'Masala', 'In (kg)', 'Out (kg)', 'Loss %', 'Pockets', 'Total cost', 'Cost / pocket', 'Status'], B.map(b => row([esc(b.BatchID), b.Date, esc(pn(b.ProductID)), g(b.InputKg), b.OutputKg ? g(b.OutputKg) : '–',
+      b.LossPercent != null ? b.LossPercent + '%' : '–', b.Pockets || '–', rs(b.TotalCost), b.CostPerPocket ? rs(b.CostPerPocket) : '–', b.Status])).join(''));
+}
+</script>
+</body>
+</html>
