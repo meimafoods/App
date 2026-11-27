@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meima – Cash & Expenses</title>
+<style>
+  :root{--brand:#7a2e1a;--bg:#faf5ee;--line:#e4d8c8;--ink:#2b2118}
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  main{max-width:1050px;margin:0 auto;padding:16px}
+  nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+  nav button{border:1px solid var(--line);background:#fff;padding:7px 12px;border-radius:6px;cursor:pointer}
+  nav button.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .bar{display:flex;gap:8px;align-items:end;margin-bottom:10px;flex-wrap:wrap}.bar .sp{flex:1}
+  .bar label{margin:0 0 3px}
+  button.pri{background:var(--brand);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer}
+  button.pri:disabled{opacity:.4;cursor:not-allowed}
+  button.sec{background:#fff;color:var(--brand);border:1px solid var(--brand);padding:8px 14px;border-radius:6px;cursor:pointer}
+  button.lnk{background:none;border:0;color:var(--brand);cursor:pointer;padding:2px 6px}
+  .wrap{overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:8px;margin-bottom:14px}
+  table{border-collapse:collapse;width:100%}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{background:#f3e9dc;font-size:13px}td.n,th.n{text-align:right}
+  input,select{padding:8px;border:1px solid var(--line);border-radius:6px;font:inherit}
+  label{display:block;font-size:13px}
+  #status{min-height:20px;margin-bottom:8px;font-size:13px}#status.err{color:#b00020}
+  .empty{padding:20px;text-align:center;color:#8a7a68}
+  .ok{color:#1b7a3a}.warn{color:#b26a00}.bad{color:#b00020}
+  .cards{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}.cards div{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 14px;min-width:130px}
+  .cards span{display:block;font-size:12px;color:#8a7a68}.cards b{font-size:17px}
+  .two{display:flex;gap:14px;flex-wrap:wrap}.two>div{flex:1;min-width:260px}
+</style>
+</head>
+<body>
+<div id="hdr"></div>
+<main>
+  <nav id="nav"></nav>
+  <div id="status"></div>
+  <div id="body"></div>
+</main>
+
+<script src="meima-api.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const rs = n => Meima.money(n);
+const iso = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const today = () => iso(new Date());
+const TABS = ['Cash flow', 'To pay', 'Expenses'];
+let tab = 'Cash flow', accts = [], vendors = [], customers = [], rep = null, pays = [], exps = [], sel = new Set();
+let from = iso(new Date(new Date().getFullYear(), new Date().getMonth(), 1)), to = today(), acc = '', vf = '';
+const an = id => (accts.find(a => a.AccountID === id) || {}).Name || id;
+const party = id => ((vendors.find(v => v.VendorID === id) || customers.find(c => c.CustomerID === id)) || {}).Name || '';
+const accOpts = () => accts.map(a => [a.AccountID, a.Name]);
+
+function status(msg, err) { const s = $('#status'); s.textContent = msg || ''; s.className = err ? 'err' : ''; }
+function fail(e) { status(e.message, true); if (!Meima.isLoggedIn()) location.reload(); }
+
+Meima.requireLogin(() => {
+  $('#hdr').innerHTML = Meima.header('Cash & Expenses', Meima.menu('cash.html'));
+  show('Cash flow');
+});
+
+async function show(t) {
+  tab = t; sel = new Set();
+  $('#nav').innerHTML = TABS.map(x => `<button class="${x === t ? 'on' : ''}" data-t="${x}">${x}</button>`).join('');
+  $('#nav').querySelectorAll('button').forEach(b => b.onclick = () => show(b.dataset.t));
+  status('Loading…');
+  try {
+    [accts, vendors, customers] = await Promise.all([Meima.list('Accounts'), Meima.list('Vendors'), Meima.list('Customers')]);
+    if (t === 'Cash flow') { rep = await Meima.call('cash.report', { from, to, accountId: acc }); drawCash(); }
+    else if (t === 'To pay') { pays = await Meima.call('payables.list'); drawPay(); }
+    else { exps = await Meima.call('expense.list'); drawExp(); }
+    status('');
+  } catch (e) { fail(e); }
+}
+
+const catTable = (title, o, cls) => { const k = Object.keys(o); return `<div class="wrap"><table><thead><tr><th>${title}</th><th class="n">Amount</th></tr></thead><tbody>` +
+  (k.length ? k.map(c => `<tr><td>${esc(c)}</td><td class="n ${cls}">${rs(o[c])}</td></tr>`).join('') : `<tr><td colspan="2" style="color:#8a7a68">None</td></tr>`) + `</tbody></table></div>`; };
+
+// ---------- cash flow ----------
+function drawCash() {
+  const r = rep;
+  $('#body').innerHTML = `
+    <div class="cards">${r.accounts.map(a => `<div><span>${esc(a.Name)} balance</span><b>${rs(a.Balance)}</b></div>`).join('')}
+      <div style="border-color:var(--brand)"><span>Total cash &amp; bank</span><b>${rs(r.TotalBalance)}</b></div>
+      <div><span>Customers owe you</span><b class="ok">${rs(r.Receivable)}</b></div><div><span>You owe (to pay)</span><b class="warn">${rs(r.Payable)}</b></div></div>
+    <div class="bar"><div><label>From</label><input id="f" type="date" value="${from}"></div><div><label>To</label><input id="t" type="date" value="${to}"></div>
+      <div><label>Account</label><select id="a"><option value="">All accounts</option>${accOpts().map(o => `<option value="${esc(o[0])}" ${o[0] === acc ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}</select></div>
+      <span class="sp"></span><button class="sec" id="tr">⇄ Transfer</button><button class="pri" id="en">+ Cash entry</button></div>
+    <div class="cards"><div><span>Opening</span><b>${rs(r.Opening)}</b></div><div><span>Money in</span><b class="ok">${rs(r.In)}</b></div>
+      <div><span>Money out</span><b class="bad">${rs(r.Out)}</b></div><div><span>Closing</span><b>${rs(r.Closing)}</b></div></div>
+    <div class="two">${catTable('Money in by category', r.byIn, 'ok')}${catTable('Money out by category', r.byOut, 'bad')}</div>
+    <div class="wrap">${r.rows.length ? `<table><thead><tr><th>Date</th><th>Account</th><th>Details</th><th class="n">In</th><th class="n">Out</th><th class="n">Balance</th><th></th></tr></thead><tbody>` +
+      r.rows.map((x, i) => `<tr><td>${esc(x.Date)}</td><td>${esc(an(x.AccountID))}</td><td>${esc([x.Category, party(x.PartyID), x.RefID, x.Notes].filter(Boolean).join(' · '))}</td>
+        <td class="n ok">${x.Direction === 'IN' ? rs(x.Amount) : ''}</td><td class="n bad">${x.Direction === 'OUT' ? rs(x.Amount) : ''}</td><td class="n">${rs(x.Balance)}</td>
+        <td>${x.RefType === 'EXPENSE' ? '' : `<button class="lnk" data-u="${i}" title="Undo this entry">✕</button>`}</td></tr>`).join('') + `</tbody></table>` : `<div class="empty">No cash movements in this period.</div>`}</div>`;
+  const reload = async () => { from = $('#f').value; to = $('#t').value; acc = $('#a').value; try { rep = await Meima.call('cash.report', { from, to, accountId: acc }); drawCash(); } catch (e) { fail(e); } };
+  ['#f', '#t', '#a'].forEach(i => $(i).onchange = reload);
+  $('#en').onclick = () => Meima.ask('Cash entry', [
+    { k: 'date', l: 'Date', t: 'date', v: today() }, { k: 'accountId', l: 'Account', o: accOpts() },
+    { k: 'direction', l: 'Type', o: [['IN', 'Money in'], ['OUT', 'Money out']] }, { k: 'amount', l: 'Amount ₹', t: 'number' },
+    { k: 'category', l: 'Category (e.g. Capital, Drawings, Other income)', v: 'Capital' }, { k: 'notes', l: 'Notes' }
+  ], async d => { await Meima.call('cash.create', { ...d, amount: Number(d.amount) }); show('Cash flow'); });
+  $('#tr').onclick = () => Meima.ask('Transfer between accounts', [
+    { k: 'date', l: 'Date', t: 'date', v: today() }, { k: 'fromAccountId', l: 'From', o: accOpts() },
+    { k: 'toAccountId', l: 'To', o: accOpts().slice().reverse() }, { k: 'amount', l: 'Amount ₹', t: 'number' }, { k: 'notes', l: 'Notes' }
+  ], async d => { await Meima.call('cash.createTransfer', { ...d, amount: Number(d.amount) }); show('Cash flow'); });
+  $('#body').querySelectorAll('[data-u]').forEach(b => b.onclick = async () => {
+    if (!confirm('Undo this cash entry? Any bill or invoice it paid becomes unpaid again.')) return;
+    try { await Meima.call('cash.remove', { txnId: rep.rows[b.dataset.u].TxnID }); show('Cash flow'); } catch (e) { fail(e); }
+  });
+}
+
+// ---------- to pay ----------
+function drawPay() {
+  const names = [...new Set(pays.map(x => x.PartyID))];
+  const list = pays.filter(x => !vf || x.PartyID === vf);
+  const total = list.reduce((s, x) => s + x.Balance, 0), chosen = list.filter(x => sel.has(x.RefType + ':' + x.RefID));
+  $('#body').innerHTML = `<div class="bar"><strong>Payables</strong><select id="vf"><option value="">All vendors</option>${names.map(n => `<option value="${esc(n)}" ${n === vf ? 'selected' : ''}>${esc(n ? party(n) : 'No vendor')}</option>`).join('')}</select>
+      <span class="sp"></span><button class="pri" id="ps" ${chosen.length ? '' : 'disabled'}>Pay selected (${chosen.length}) · ${rs(chosen.reduce((s, x) => s + x.Balance, 0))}</button></div>
+    <div class="wrap">${list.length ? `<table><thead><tr><th></th><th>Date</th><th>Vendor</th><th>Details</th><th class="n">Total</th><th class="n">Paid</th><th class="n">Balance</th><th></th></tr></thead><tbody>` +
+      list.map((x, i) => `<tr><td><input type="checkbox" data-c="${i}" ${sel.has(x.RefType + ':' + x.RefID) ? 'checked' : ''}></td><td>${esc(x.Date)}</td><td>${esc(party(x.PartyID))}</td><td>${esc(x.Description)}</td>
+        <td class="n">${rs(x.Amount)}</td><td class="n">${rs(x.Paid)}</td><td class="n warn">${rs(x.Balance)}</td><td><button class="lnk" data-p="${i}">Pay…</button></td></tr>`).join('') +
+      `</tbody><tfoot><tr><td colspan="6"><strong>Total to pay</strong></td><td class="n"><strong>${rs(total)}</strong></td><td></td></tr></tfoot></table>` : `<div class="empty">Nothing to pay. 🎉</div>`}</div>`;
+  $('#vf').onchange = e => { vf = e.target.value; sel = new Set(); drawPay(); };
+  $('#body').querySelectorAll('[data-c]').forEach(c => c.onchange = () => { const x = list[c.dataset.c], k = x.RefType + ':' + x.RefID; c.checked ? sel.add(k) : sel.delete(k); drawPay(); });
+  $('#body').querySelectorAll('[data-p]').forEach(b => b.onclick = () => { const x = list[b.dataset.p];
+    Meima.ask('Pay · ' + x.Description, [{ k: 'date', l: 'Date', t: 'date', v: today() }, { k: 'amount', l: `Amount ₹ (balance ${x.Balance})`, t: 'number', v: x.Balance },
+      { k: 'accountId', l: 'Paid from', o: accOpts() }, { k: 'notes', l: 'Notes' }],
+      async d => { await Meima.call('payables.pay', { date: d.date, accountId: d.accountId, notes: d.notes, items: [{ refType: x.RefType, refId: x.RefID, amount: Number(d.amount) }] }); show('To pay'); }); });
+  if (chosen.length) $('#ps').onclick = () => Meima.ask(`Pay ${chosen.length} item(s) in full`, [{ k: 'date', l: 'Date', t: 'date', v: today() }, { k: 'accountId', l: 'Paid from', o: accOpts() }, { k: 'notes', l: 'Notes' }],
+    async d => { await Meima.call('payables.pay', { date: d.date, accountId: d.accountId, notes: d.notes, items: chosen.map(x => ({ refType: x.RefType, refId: x.RefID })) }); show('To pay'); });
+}
+
+// ---------- expenses ----------
+function drawExp() {
+  const cats = [...new Set(exps.map(e => e.Category))].join(', ');
+  $('#body').innerHTML = `<div class="bar"><strong>Other expenses</strong><span class="sp"></span><button class="pri" id="ae">+ Add expense</button></div>
+    <p style="font-size:13px;color:#8a7a68;margin-top:0">For costs that are not purchases or batch charges: rent, transport, marketing, licences. Each one is paid from an account straight away.</p>
+    <div class="wrap">${exps.length ? `<table><thead><tr><th>Date</th><th>Category</th><th>Account</th><th>Notes</th><th class="n">Amount</th><th></th></tr></thead><tbody>` +
+      exps.map((e, i) => `<tr><td>${esc(e.Date)}</td><td>${esc(e.Category)}</td><td>${esc(an(e.AccountID))}</td><td>${esc(e.Notes)}</td><td class="n">${rs(e.Amount)}</td><td><button class="lnk" data-d="${i}">✕</button></td></tr>`).join('') +
+      `</tbody><tfoot><tr><td colspan="4"><strong>Total</strong></td><td class="n"><strong>${rs(exps.reduce((s, e) => s + Number(e.Amount), 0))}</strong></td><td></td></tr></tfoot></table>` : `<div class="empty">No expenses yet.</div>`}</div>`;
+  $('#ae').onclick = () => Meima.ask('Add expense', [{ k: 'date', l: 'Date', t: 'date', v: today() }, { k: 'category', l: 'Category' + (cats ? ' (used: ' + cats + ')' : ' (e.g. Rent, Transport)') },
+    { k: 'amount', l: 'Amount ₹', t: 'number' }, { k: 'accountId', l: 'Paid from', o: accOpts() }, { k: 'notes', l: 'Notes' }],
+    async d => { await Meima.call('expense.create', { ...d, amount: Number(d.amount) }); show('Expenses'); });
+  $('#body').querySelectorAll('[data-d]').forEach(b => b.onclick = async () => {
+    if (!confirm('Remove this expense? The payment is removed from the cash flow too.')) return;
+    try { await Meima.call('expense.remove', { expenseId: exps[b.dataset.d].ExpenseID }); show('Expenses'); } catch (e) { fail(e); }
+  });
+}
+</script>
+</body>
+</html>
