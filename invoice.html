@@ -27,7 +27,7 @@
 </style>
 </head>
 <body>
-<div class="tools"><a href="sales.html">← Sales</a><button onclick="window.print()">Print / Save as PDF</button></div>
+<div class="tools"><a href="sales.html">← Sales</a><span id="mn"></span><button onclick="window.print()">Print / Save as PDF</button></div>
 <div id="inv"><p style="text-align:center;color:#8a7a68">Loading…</p></div>
 
 <script src="meima-api.js"></script>
@@ -37,6 +37,7 @@ const rs = n => Meima.money(n);
 const fmtDate = d => { const [y, m, dd] = String(d).split('-'); return `${dd}-${m}-${y}`; };
 
 Meima.requireLogin(async () => {
+  document.getElementById('mn').innerHTML = Meima.menu('sales.html');
   try {
     const id = new URLSearchParams(location.search).get('id');
     const [invs, custs, prods, S] = await Promise.all([Meima.call('invoice.list'), Meima.list('Customers', true), Meima.list('Products', true), Meima.settings()]);

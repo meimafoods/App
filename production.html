@@ -61,7 +61,7 @@ async function load() {
 }
 
 Meima.requireLogin(async () => {
-  $('#hdr').innerHTML = Meima.header('Production', '<a href="production-plan.html" style="color:#7a2e1a;font-size:14px;margin-right:14px">Plan</a><a href="purchase.html" style="color:#7a2e1a;font-size:14px;margin-right:14px">Purchase & Stock</a><a href="masters.html" style="color:#7a2e1a;font-size:14px">Masters</a>');
+  $('#hdr').innerHTML = Meima.header('Production', Meima.menu('production.html'));
   try {
     await load();
     const q = new URLSearchParams(location.search);

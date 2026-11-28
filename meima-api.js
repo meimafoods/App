@@ -9,12 +9,13 @@ const Meima = {
   LOGO: 'assets/logo.png',              // full logo with tagline (login, invoices)
   LOGO_BADGE: 'assets/logo-badge.png',  // oval only (page headers)
 
-  PAGES: [['masters.html', 'Masters'], ['purchase.html', 'Purchase & Stock'], ['production-plan.html', 'Production plan'],
+  PAGES: [['index.html', 'Home'], ['masters.html', 'Masters'], ['purchase.html', 'Purchase & Stock'], ['production-plan.html', 'Production plan'],
           ['production.html', 'Production'], ['sales.html', 'Sales & invoices'], ['cash.html', 'Cash & expenses'], ['reports.html', 'Reports']],
 
   /** Dropdown menu linking every page: Meima.header('Title', Meima.menu('this-page.html')). Add new pages to PAGES. */
   menu(current) {
-    const links = this.PAGES.map(([u, n]) => `<a href="${u}" style="display:block;padding:8px 14px;text-decoration:none;white-space:nowrap;color:${u === current ? '#7a2e1a;font-weight:600' : '#2b2118'}">${n}</a>`).join('');
+    const links = this.PAGES.map(([u, n]) => `<a href="${u}" style="display:block;padding:8px 14px;text-decoration:none;white-space:nowrap;color:${u === current ? '#7a2e1a;font-weight:600' : '#2b2118'}">${n}</a>`).join('') +
+      `<a href="index.html" onclick="Meima.logout()" style="display:block;padding:8px 14px;text-decoration:none;color:#b00020;border-top:1px solid #e4d8c8">Log out</a>`;
     return `<details style="position:relative"><summary style="cursor:pointer;list-style:none;background:#7a2e1a;color:#fff;border-radius:6px;padding:7px 14px;font:14px system-ui,sans-serif">☰ Menu</summary>
       <div style="position:absolute;right:0;top:38px;background:#fff;border:1px solid #e4d8c8;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.15);z-index:50;min-width:190px;font:14px system-ui,sans-serif">${links}</div></details>`;
   },

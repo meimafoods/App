@@ -56,7 +56,7 @@ function status(msg, err) { const s = $('#status'); s.textContent = msg || ''; s
 function fail(e) { status(e.message, true); if (!Meima.isLoggedIn()) location.reload(); }
 
 Meima.requireLogin(() => {
-  $('#hdr').innerHTML = Meima.header('Sales', '<a href="production.html" style="color:#7a2e1a;font-size:14px;margin-right:14px">Production</a><a href="masters.html" style="color:#7a2e1a;font-size:14px">Masters</a>');
+  $('#hdr').innerHTML = Meima.header('Sales', Meima.menu('sales.html'));
   show('Invoices');
 });
 

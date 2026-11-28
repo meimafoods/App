@@ -55,7 +55,7 @@ let P = [], B = [], M = [], S = {}, ST = {}, lastProd = '';
 Meima.requireLogin(init);
 
 async function init() {
-  $('#hdr').innerHTML = Meima.header('Production Plan', '<a href="masters.html" style="color:#7a2e1a;font-size:14px">Masters</a>');
+  $('#hdr').innerHTML = Meima.header('Production Plan', Meima.menu('production-plan.html'));
   $('#dt').value = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   try {
     let boms, stk;

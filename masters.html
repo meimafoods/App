@@ -86,8 +86,7 @@ async function doLogin() {
 }
 $('#go').onclick = doLogin;
 $('#pin').onkeydown = e => { if (e.key === 'Enter') doLogin(); };
-$('#hdr').innerHTML = Meima.header('Masters', '<button class="lnk" id="out">Log out</button>');
-$('#out').onclick = () => { Meima.logout(); showLogin(); };
+$('#hdr').innerHTML = Meima.header('Masters', Meima.menu('masters.html'));
 
 // ---------- navigation ----------
 function drawNav() {
