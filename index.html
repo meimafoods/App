@@ -17,8 +17,6 @@
   .tiles a{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px;color:inherit;text-decoration:none;transition:.12s}
   .tiles a:hover{border-color:var(--brand);box-shadow:0 2px 10px rgba(122,46,26,.12);transform:translateY(-1px)}
   .tiles b{display:block;color:var(--brand);margin-bottom:2px}.tiles small{color:#6b5a49}
-  .alerts{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 16px}
-  .alerts p{margin:6px 0}.alerts a{color:var(--brand)}
   .ok{color:#1b7a3a}.warn{color:#b26a00}.bad{color:#b00020}
 </style>
 </head>
@@ -30,8 +28,6 @@
 
   <h3>At a glance</h3>
   <div class="cards" id="cards"><div><span>Loading…</span><b>&nbsp;</b></div></div>
-  <h3>Needs attention</h3>
-  <div class="alerts" id="alerts">Loading…</div>
 
   <h3>Buy</h3>
   <div class="tiles"><a href="purchase.html"><b>🛒 Purchase &amp; Stock</b><small>Record purchases, check stock and ingredient price history</small></a></div>
@@ -60,21 +56,13 @@ Meima.requireLogin(async () => {
   $('#today').textContent = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const t = iso(new Date());
   try {
-    const [rep, stk, bat, fg, prods] = await Promise.all([Meima.call('cash.report', { from: t, to: t }), Meima.call('stock.list'), Meima.call('batch.list'), Meima.call('fg.list'), Meima.list('Products', true)]);
-    const pn = id => (prods.find(p => p.ProductID === id) || {}).Name || id;
-    const open = bat.filter(b => b.Status === 'Issued'), low = stk.filter(s => s.Flag);
+    const [rep, fg] = await Promise.all([Meima.call('cash.report', { from: t, to: t }), Meima.call('fg.list')]);
     $('#cards').innerHTML = `<a href="cash.html"><span>Cash &amp; bank</span><b>${Meima.money(rep.TotalBalance)}</b></a>
       <a href="sales.html"><span>Customers owe you</span><b class="ok">${Meima.money(rep.Receivable)}</b></a>
       <a href="cash.html"><span>You owe</span><b class="warn">${Meima.money(rep.Payable)}</b></a>
       <a href="sales.html"><span>Finished pockets in stock</span><b>${fg.reduce((s, f) => s + Number(f.Pockets || 0), 0)}</b></a>`;
-    const rows = [];
-    if (low.length) rows.push(`<p>⚠️ <b>Stock:</b> ${low.map(s => `${esc(s.Name)} (${s.QtyKg} kg${s.Flag === 'negative' ? ', negative' : ', low'})`).join(', ')} · <a href="purchase.html">Stock</a></p>`);
-    if (open.length) rows.push(`<p>🏭 <b>Batches waiting for output:</b> ${open.map(b => `${esc(b.BatchID)} ${esc(pn(b.ProductID))} (${esc(b.Date)})`).join(', ')} · <a href="production.html">Production</a></p>`);
-    if (rep.Payable > 0) rows.push(`<p>💰 <b>To pay:</b> ${Meima.money(rep.Payable)} to vendors and for batch charges · <a href="cash.html">Cash &amp; expenses</a></p>`);
-    if (rep.Receivable > 0) rows.push(`<p>🧾 <b>To receive:</b> ${Meima.money(rep.Receivable)} from customers · <a href="sales.html">Sales</a></p>`);
-    $('#alerts').innerHTML = rows.length ? rows.join('') : `<span class="ok">All clear.</span>`;
   } catch (e) {
-    $('#cards').innerHTML = ''; $('#alerts').textContent = e.message;
+    $('#cards').innerHTML = `<div><span>${esc(e.message)}</span></div>`;
     if (!Meima.isLoggedIn()) location.reload();
   }
 });
